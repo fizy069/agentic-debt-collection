@@ -20,6 +20,11 @@ class AgentChannel(str, Enum):
     VOICE_STUB = "voice_stub_chat"
 
 
+class ConversationRole(str, Enum):
+    BORROWER = "borrower"
+    AGENT = "agent"
+
+
 class BorrowerRequest(BaseModel):
     borrower_id: str = Field(min_length=3, max_length=64)
     account_reference: str = Field(
@@ -53,8 +58,56 @@ class AgentStageOutput(BaseModel):
     response_text: str
     summary: str
     decision: str
+    stage_complete: bool = False
+    collected_fields: dict[str, bool] = Field(default_factory=dict)
+    transition_reason: str | None = None
     next_stage: PipelineStage | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ConversationMessage(BaseModel):
+    role: ConversationRole
+    stage: PipelineStage | None = None
+    text: str
+    timestamp: str
+    message_id: str | None = None
+
+
+class StageTurnInput(BaseModel):
+    borrower: BorrowerRequest
+    stage: PipelineStage
+    borrower_message: str = Field(min_length=1, max_length=1500)
+    transcript: list[ConversationMessage] = Field(default_factory=list)
+    collected_fields: dict[str, bool] = Field(default_factory=dict)
+    turn_index: int = Field(ge=1)
+
+
+class StageTurnOutput(BaseModel):
+    stage: PipelineStage
+    channel: AgentChannel
+    assistant_reply: str
+    summary: str
+    decision: str
+    stage_complete: bool
+    collected_fields: dict[str, bool] = Field(default_factory=dict)
+    transition_reason: str
+    next_stage: PipelineStage | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class BorrowerMessageRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=1500)
+    message_id: str | None = Field(
+        default=None,
+        max_length=64,
+        description="Optional idempotency token for the borrower turn.",
+    )
+
+
+class BorrowerMessageResponse(BaseModel):
+    workflow_id: str
+    accepted: bool
+    message_id: str | None = None
 
 
 class PipelineStatus(BaseModel):
@@ -63,6 +116,11 @@ class PipelineStatus(BaseModel):
     completed: bool = False
     failed: bool = False
     outputs: list[AgentStageOutput] = Field(default_factory=list)
+    transcript: list[ConversationMessage] = Field(default_factory=list)
+    pending_messages: int = 0
+    latest_assistant_reply: str | None = None
+    stage_turn_counts: dict[str, int] = Field(default_factory=dict)
+    stage_collected_fields: dict[str, dict[str, bool]] = Field(default_factory=dict)
     final_outcome: str | None = None
     error: str | None = None
 

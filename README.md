@@ -48,6 +48,13 @@ This starts Temporal, worker, and API in separate PowerShell windows:
 powershell -ExecutionPolicy Bypass -File .\scripts\dev-launch.ps1
 ```
 
+The launcher now uses `.venv\Scripts\python.exe` and bootstraps dependencies automatically.
+If you already installed deps and want a faster start, skip install:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\dev-launch.ps1 -SkipInstall
+```
+
 Optional: open Temporal UI in browser immediately:
 
 ```powershell
@@ -70,7 +77,7 @@ Terminal 3 (API):
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-### 5) Run a pipeline
+### 5) Run a pipeline (start workflow)
 
 ```powershell
 $body = @{
@@ -91,7 +98,35 @@ $start
 Invoke-RestMethod -Method Get -Uri ("http://127.0.0.1:8000/pipelines/" + $start.workflow_id)
 ```
 
+### 6) Multi-turn borrower chat progression
+
+Send borrower messages into the active workflow:
+
+```powershell
+Invoke-RestMethod -Method Post `
+  -Uri ("http://127.0.0.1:8000/pipelines/" + $start.workflow_id + "/messages") `
+  -ContentType "application/json" `
+  -Body (@{ message = "My name is Alex Doe, DOB 1990-01-01, last four 1234." ; message_id = "msg-1" } | ConvertTo-Json)
+```
+
+Poll status:
+
+```powershell
+Invoke-RestMethod -Method Get -Uri ("http://127.0.0.1:8000/pipelines/" + $start.workflow_id)
+```
+
 Expected behavior:
-- workflow stages move in strict order:
+- workflow stages progress in strict order:
   `assessment -> resolution -> final_notice -> completed`
-- `GET /pipelines/{id}` returns stage outputs and final outcome.
+- each stage can process multiple borrower turns before transition
+- status includes transcript, latest assistant reply, per-stage turn counters, and outputs.
+
+### 7) Scripted Step 1 smoke test
+
+With Temporal + worker + API running:
+
+```powershell
+python .\scripts\test_step1_multiturn.py --base-url http://127.0.0.1:8000
+```
+
+The script starts a workflow, sends staged borrower messages, waits for stage transitions, and validates end-to-end completion.

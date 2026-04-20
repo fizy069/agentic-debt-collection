@@ -10,6 +10,8 @@ from temporalio.client import Client
 from temporalio.service import RPCError, RPCStatusCode
 
 from app.models.pipeline import (
+    BorrowerMessageRequest,
+    BorrowerMessageResponse,
     PipelineStartRequest,
     PipelineStartResponse,
     PipelineStatus,
@@ -78,7 +80,7 @@ async def start_pipeline(
             {"borrower": payload.borrower.model_dump(mode="json")},
             id=workflow_id,
             task_queue=task_queue,
-            execution_timeout=timedelta(minutes=10),
+            execution_timeout=timedelta(hours=24),
         )
     except RPCError as exc:
         raise HTTPException(
@@ -90,6 +92,41 @@ async def start_pipeline(
         workflow_id=workflow_id,
         run_id=handle.first_execution_run_id,
         task_queue=task_queue,
+    )
+
+
+@app.post(
+    "/pipelines/{workflow_id}/messages",
+    response_model=BorrowerMessageResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def send_borrower_message(
+    workflow_id: str,
+    payload: BorrowerMessageRequest,
+    client: Client = Depends(get_temporal_client),
+) -> BorrowerMessageResponse:
+    handle = client.get_workflow_handle(workflow_id)
+
+    try:
+        await handle.signal(
+            BorrowerWorkflow.add_borrower_message,
+            payload.model_dump(mode="json"),
+        )
+    except RPCError as exc:
+        if exc.status == RPCStatusCode.NOT_FOUND:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Workflow '{workflow_id}' not found.",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to send borrower message: {exc}",
+        ) from exc
+
+    return BorrowerMessageResponse(
+        workflow_id=workflow_id,
+        accepted=True,
+        message_id=payload.message_id,
     )
 
 
