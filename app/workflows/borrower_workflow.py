@@ -26,6 +26,7 @@ class BorrowerWorkflow:
         self._status: dict[str, Any] = self._new_status("pending")
         self._pending_messages: list[dict[str, Any]] = []
         self._seen_message_ids: dict[str, bool] = {}
+        self._completed_stages: list[dict[str, Any]] = []
 
     def _new_status(self, workflow_id: str) -> dict[str, Any]:
         return PipelineStatus(
@@ -114,6 +115,7 @@ class BorrowerWorkflow:
         self._status = self._new_status(workflow_id)
         self._pending_messages = []
         self._seen_message_ids = {}
+        self._completed_stages = []
 
         # Seed first turn from borrower request.
         self.add_borrower_message(
@@ -132,6 +134,7 @@ class BorrowerWorkflow:
         try:
             for stage in stage_order:
                 stage_key = stage.value
+                workflow.logger.info("Entering stage %s", stage_key)
                 self._set_stage(stage)
                 self._status["stage_collected_fields"].setdefault(stage_key, {})
                 self._status["stage_turn_counts"].setdefault(stage_key, 0)
@@ -149,6 +152,9 @@ class BorrowerWorkflow:
                     )
 
                     turn_index = int(self._status["stage_turn_counts"][stage_key]) + 1
+                    workflow.logger.info(
+                        "Executing turn %d for stage %s", turn_index, stage_key,
+                    )
                     stage_input = StageTurnInput(
                         borrower=borrower,
                         stage=stage,
@@ -159,6 +165,7 @@ class BorrowerWorkflow:
                         ],
                         collected_fields=self._status["stage_collected_fields"][stage_key],
                         turn_index=turn_index,
+                        completed_stages=self._completed_stages,
                     )
 
                     turn_output_payload = await workflow.execute_activity(
@@ -197,12 +204,24 @@ class BorrowerWorkflow:
                     )
 
                     if turn_output.stage_complete:
+                        workflow.logger.info(
+                            "Stage %s complete  reason=%s  turns=%d",
+                            stage_key, turn_output.transition_reason, turn_index,
+                        )
+                        self._completed_stages.append({
+                            "stage": stage_key,
+                            "collected_fields": turn_output.collected_fields,
+                            "transition_reason": turn_output.transition_reason,
+                            "turns": turn_index,
+                        })
                         break
 
             self._status["final_outcome"] = "final_notice_issued"
             self._set_stage(PipelineStage.COMPLETED, completed=True)
+            workflow.logger.info("Pipeline completed")
             return self._status
         except Exception as exc:
+            workflow.logger.error("Pipeline failed: %s", exc)
             self._status["failed"] = True
             self._status["error"] = str(exc)
             self._set_stage(PipelineStage.FAILED, completed=True)

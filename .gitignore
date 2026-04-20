@@ -36,5 +36,8 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Logs
+logs/
+
 *.md
 *.ps1

@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pipeline Test Console</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; display: flex; flex-direction: column; }
+  header { padding: 1rem 1.5rem; background: #1e293b; border-bottom: 1px solid #334155; display: flex; align-items: center; gap: 1rem; }
+  header h1 { font-size: 1rem; font-weight: 600; color: #f8fafc; }
+  .badge { font-size: 0.7rem; padding: 2px 8px; border-radius: 9999px; font-weight: 500; }
+  .badge-stage { background: #1d4ed8; color: #bfdbfe; }
+  .badge-done { background: #15803d; color: #bbf7d0; }
+  .badge-err { background: #b91c1c; color: #fecaca; }
+  main { flex: 1; display: flex; flex-direction: column; max-width: 720px; width: 100%; margin: 0 auto; }
+
+  /* setup form */
+  #setup { padding: 1.5rem; display: flex; flex-direction: column; gap: 0.75rem; }
+  #setup h2 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; margin-bottom: 0.25rem; }
+  .field { display: flex; gap: 0.5rem; align-items: center; }
+  .field label { width: 130px; font-size: 0.8rem; color: #94a3b8; flex-shrink: 0; }
+  .field input { flex: 1; padding: 6px 10px; border-radius: 6px; border: 1px solid #334155; background: #1e293b; color: #f1f5f9; font-size: 0.85rem; }
+  .field input:focus { outline: none; border-color: #3b82f6; }
+  button { padding: 8px 18px; border-radius: 6px; border: none; font-size: 0.85rem; font-weight: 500; cursor: pointer; transition: background 0.15s; }
+  .btn-primary { background: #2563eb; color: #fff; }
+  .btn-primary:hover { background: #1d4ed8; }
+  .btn-primary:disabled { background: #334155; color: #64748b; cursor: not-allowed; }
+
+  /* chat area */
+  #chat-area { display: none; flex: 1; flex-direction: column; }
+  #messages { flex: 1; overflow-y: auto; padding: 1rem 1.5rem; display: flex; flex-direction: column; gap: 0.5rem; }
+  .msg { max-width: 85%; padding: 8px 12px; border-radius: 10px; font-size: 0.85rem; line-height: 1.5; word-wrap: break-word; }
+  .msg-borrower { align-self: flex-end; background: #1d4ed8; color: #fff; border-bottom-right-radius: 2px; }
+  .msg-agent { align-self: flex-start; background: #1e293b; color: #e2e8f0; border: 1px solid #334155; border-bottom-left-radius: 2px; }
+  .msg-system { align-self: center; background: transparent; color: #64748b; font-size: 0.75rem; font-style: italic; }
+  .msg-stage { font-size: 0.65rem; color: #94a3b8; margin-top: 2px; }
+
+  /* input bar */
+  #input-bar { padding: 0.75rem 1.5rem; background: #1e293b; border-top: 1px solid #334155; display: flex; gap: 0.5rem; }
+  #input-bar input { flex: 1; padding: 8px 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #f1f5f9; font-size: 0.85rem; }
+  #input-bar input:focus { outline: none; border-color: #3b82f6; }
+
+  /* status bar */
+  #status-bar { padding: 0.5rem 1.5rem; background: #1e293b; border-top: 1px solid #334155; font-size: 0.7rem; color: #64748b; display: flex; gap: 1rem; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Debt Collection Pipeline - Test Console</h1>
+  <span id="stage-badge" class="badge badge-stage" style="display:none"></span>
+</header>
+
+<main>
+  <div id="setup">
+    <h2>Start a new pipeline</h2>
+    <div class="field">
+      <label>Borrower ID</label>
+      <input id="f-bid" value="B-TEST-001">
+    </div>
+    <div class="field">
+      <label>Account Ref</label>
+      <input id="f-acct" value="ACCT-9876">
+    </div>
+    <div class="field">
+      <label>Debt Amount</label>
+      <input id="f-debt" type="number" value="4500">
+    </div>
+    <div class="field">
+      <label>Days Past Due</label>
+      <input id="f-dpd" type="number" value="45">
+    </div>
+    <div class="field">
+      <label>Initial Message</label>
+      <input id="f-msg" value="I received a notice and want to understand my options.">
+    </div>
+    <button id="btn-start" class="btn-primary" onclick="startPipeline()">Start Pipeline</button>
+  </div>
+
+  <div id="chat-area">
+    <div id="messages"></div>
+    <div id="input-bar">
+      <input id="chat-input" placeholder="Type a message as the borrower..." onkeydown="if(event.key==='Enter')sendMessage()">
+      <button class="btn-primary" onclick="sendMessage()">Send</button>
+    </div>
+    <div id="status-bar">
+      <span>Workflow: <strong id="sb-wf">-</strong></span>
+      <span>Stage: <strong id="sb-stage">-</strong></span>
+      <span>Status: <strong id="sb-status">-</strong></span>
+    </div>
+  </div>
+</main>
+
+<script>
+const API = '';
+let workflowId = null;
+let seenMessageCount = 0;
+let pollTimer = null;
+
+async function startPipeline() {
+  const btn = document.getElementById('btn-start');
+  btn.disabled = true;
+  btn.textContent = 'Starting...';
+
+  const body = {
+    borrower: {
+      borrower_id: document.getElementById('f-bid').value,
+      account_reference: document.getElementById('f-acct').value,
+      debt_amount: parseFloat(document.getElementById('f-debt').value),
+      days_past_due: parseInt(document.getElementById('f-dpd').value),
+      borrower_message: document.getElementById('f-msg').value,
+    }
+  };
+
+  try {
+    const res = await fetch(API + '/pipelines', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || res.statusText);
+    }
+    const data = await res.json();
+    workflowId = data.workflow_id;
+
+    document.getElementById('setup').style.display = 'none';
+    document.getElementById('chat-area').style.display = 'flex';
+    document.getElementById('sb-wf').textContent = workflowId;
+
+    addSystemMsg('Pipeline started. Workflow: ' + workflowId);
+    addBorrowerMsg(body.borrower.borrower_message);
+
+    seenMessageCount = 0;
+    startPolling();
+  } catch (e) {
+    addSystemMsg('ERROR: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = 'Start Pipeline';
+  }
+}
+
+async function sendMessage() {
+  const input = document.getElementById('chat-input');
+  const text = input.value.trim();
+  if (!text || !workflowId) return;
+  input.value = '';
+
+  addBorrowerMsg(text);
+
+  try {
+    const res = await fetch(API + '/pipelines/' + workflowId + '/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || res.statusText);
+    }
+  } catch (e) {
+    addSystemMsg('Send failed: ' + e.message);
+  }
+}
+
+async function pollStatus() {
+  if (!workflowId) return;
+  try {
+    const res = await fetch(API + '/pipelines/' + workflowId);
+    if (!res.ok) return;
+    const data = await res.json();
+
+    document.getElementById('sb-stage').textContent = data.current_stage;
+    document.getElementById('sb-status').textContent =
+      data.completed ? 'completed' : data.failed ? 'failed' : 'running';
+
+    const badge = document.getElementById('stage-badge');
+    badge.style.display = 'inline';
+    badge.textContent = data.current_stage;
+    badge.className = 'badge ' + (data.completed ? 'badge-done' : data.failed ? 'badge-err' : 'badge-stage');
+
+    const transcript = data.transcript || [];
+    while (seenMessageCount < transcript.length) {
+      const msg = transcript[seenMessageCount];
+      if (msg.role === 'agent') {
+        addAgentMsg(msg.text, msg.stage);
+      }
+      seenMessageCount++;
+    }
+
+    if (data.completed || data.failed) {
+      stopPolling();
+      const label = data.completed ? 'Pipeline completed' : 'Pipeline failed';
+      addSystemMsg(label + (data.final_outcome ? ' (' + data.final_outcome + ')' : '') + (data.error ? ': ' + data.error : ''));
+      document.getElementById('chat-input').disabled = true;
+    }
+  } catch (_) { /* ignore transient poll errors */ }
+}
+
+function startPolling() {
+  pollStatus();
+  pollTimer = setInterval(pollStatus, 1500);
+}
+
+function stopPolling() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+
+function addBorrowerMsg(text) {
+  const el = document.createElement('div');
+  el.className = 'msg msg-borrower';
+  el.textContent = text;
+  appendMsg(el);
+}
+
+function addAgentMsg(text, stage) {
+  const el = document.createElement('div');
+  el.className = 'msg msg-agent';
+  el.textContent = text;
+  if (stage) {
+    const s = document.createElement('div');
+    s.className = 'msg-stage';
+    s.textContent = stage;
+    el.appendChild(s);
+  }
+  appendMsg(el);
+}
+
+function addSystemMsg(text) {
+  const el = document.createElement('div');
+  el.className = 'msg msg-system';
+  el.textContent = text;
+  appendMsg(el);
+}
+
+function appendMsg(el) {
+  const container = document.getElementById('messages');
+  container.appendChild(el);
+  container.scrollTop = container.scrollHeight;
+}
+</script>
+</body>
+</html>

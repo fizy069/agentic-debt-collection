@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 
 from anthropic import APIConnectionError, APIError, APITimeoutError, AsyncAnthropic
+
+logger = logging.getLogger(__name__)
 
 
 class AnthropicServiceError(RuntimeError):
@@ -31,6 +34,10 @@ class AnthropicClient:
         self._api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
         self._model = model or os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5")
         self._client = AsyncAnthropic(api_key=self._api_key) if self._api_key else None
+        logger.info(
+            "AnthropicClient init  model=%s  key_present=%s",
+            self._model, bool(self._api_key),
+        )
 
     async def generate(
         self,
@@ -40,6 +47,7 @@ class AnthropicClient:
         max_tokens: int = 300,
     ) -> LLMResult:
         if not self._client:
+            logger.warning("LLM call skipped – no API key, returning stub response")
             return LLMResult(
                 text=(
                     "Stub response: live Anthropic key not configured. "
@@ -48,6 +56,11 @@ class AnthropicClient:
                 model="stub",
                 used_fallback=True,
             )
+
+        logger.info(
+            "LLM request  model=%s  max_tokens=%d  system_len=%d  user_len=%d",
+            self._model, max_tokens, len(system_prompt), len(user_prompt),
+        )
 
         try:
             response = await self._client.messages.create(
@@ -58,7 +71,15 @@ class AnthropicClient:
                 messages=[{"role": "user", "content": user_prompt}],
             )
         except (APIConnectionError, APITimeoutError, APIError) as exc:
+            logger.error("LLM request failed: %s", exc)
             raise AnthropicServiceError("anthropic_request_failed", str(exc)) from exc
+
+        logger.info(
+            "LLM response  model=%s  stop_reason=%s  usage=%s",
+            response.model,
+            response.stop_reason,
+            getattr(response, "usage", None),
+        )
 
         text_blocks = []
         for content_block in response.content:
@@ -68,6 +89,7 @@ class AnthropicClient:
 
         text = "\n".join(text_blocks).strip()
         if not text:
+            logger.error("LLM returned empty text content")
             raise AnthropicServiceError(
                 "anthropic_empty_response",
                 "Anthropic returned no text content.",

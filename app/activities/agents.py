@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from functools import lru_cache
 from pathlib import Path
 import re
@@ -7,6 +8,8 @@ from typing import Any
 
 from dotenv import load_dotenv
 from temporalio import activity
+
+logger = logging.getLogger(__name__)
 
 from app.models.pipeline import (
     AgentChannel,
@@ -17,6 +20,8 @@ from app.models.pipeline import (
     StageTurnOutput,
 )
 from app.services.anthropic_client import AnthropicClient
+from app.services.handoff import build_handoff_summary
+from app.services.token_budget import enforce_context_budget
 
 
 @lru_cache(maxsize=1)
@@ -240,40 +245,38 @@ def _evaluate_stage_turn(
     )
 
 
+_PROMPT_FILES = {
+    PipelineStage.ASSESSMENT: "assessment.txt",
+    PipelineStage.RESOLUTION: "resolution.txt",
+    PipelineStage.FINAL_NOTICE: "final_notice.txt",
+}
+
+
+@lru_cache(maxsize=3)
+def _load_prompt(stage: PipelineStage) -> str:
+    """Load system prompt text from ``app/prompts/<stage>.txt``."""
+    filename = _PROMPT_FILES[stage]
+    path = Path(__file__).resolve().parent.parent / "prompts" / filename
+    return path.read_text(encoding="utf-8").strip()
+
+
 def _stage_defaults(
     stage: PipelineStage,
 ) -> tuple[AgentChannel, PipelineStage | None, str]:
+    system_prompt = _load_prompt(stage)
     if stage == PipelineStage.ASSESSMENT:
-        return (
-            AgentChannel.CHAT,
-            PipelineStage.RESOLUTION,
-            (
-                "You are Agent 1 (Assessment). Keep a professional and clinical tone. "
-                "Collect missing identity and ability-to-pay details. "
-                "Do not negotiate terms in this stage."
-            ),
-        )
+        return AgentChannel.CHAT, PipelineStage.RESOLUTION, system_prompt
     if stage == PipelineStage.RESOLUTION:
-        return (
-            AgentChannel.VOICE_STUB,
-            PipelineStage.FINAL_NOTICE,
-            (
-                "You are Agent 2 (Resolution) acting as voice-style text. "
-                "Present policy-bounded options, handle objections, and seek commitment."
-            ),
-        )
-    return (
-        AgentChannel.CHAT,
-        None,
-        (
-            "You are Agent 3 (Final Notice). "
-            "Provide a clear final option with expiry and documented next steps."
-        ),
-    )
+        return AgentChannel.VOICE_STUB, PipelineStage.FINAL_NOTICE, system_prompt
+    return AgentChannel.CHAT, None, system_prompt
 
 
 async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
     turn_input = StageTurnInput.model_validate(payload)
+    logger.info(
+        "stage_turn_start  stage=%s  turn=%d  borrower=%s",
+        turn_input.stage.value, turn_input.turn_index, turn_input.borrower.borrower_id,
+    )
     channel, next_stage, system_prompt = _stage_defaults(turn_input.stage)
 
     updated_fields, stage_complete, transition_reason, decision = _evaluate_stage_turn(
@@ -300,6 +303,21 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
         "If complete, provide a brief transition-ready response."
     )
 
+    if turn_input.completed_stages:
+        handoff_json = build_handoff_summary(
+            turn_input.completed_stages,
+            turn_input.borrower.model_dump(mode="json"),
+            [msg.model_dump(mode="json") for msg in turn_input.transcript],
+        )
+        user_prompt = (
+            f"Prior stage context:\n{handoff_json}\n\n"
+            + user_prompt
+        )
+
+    system_prompt, user_prompt = enforce_context_budget(
+        system_prompt, user_prompt,
+    )
+
     llm_result = await _get_anthropic_client().generate(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
@@ -320,6 +338,11 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
             "used_fallback": llm_result.used_fallback,
             "turn_index": turn_input.turn_index,
         },
+    )
+    logger.info(
+        "stage_turn_end  stage=%s  turn=%d  complete=%s  decision=%s  model=%s",
+        turn_input.stage.value, turn_input.turn_index, stage_complete,
+        decision, llm_result.model,
     )
     return turn_output.model_dump(mode="json")
 

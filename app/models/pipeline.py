@@ -80,6 +80,10 @@ class StageTurnInput(BaseModel):
     transcript: list[ConversationMessage] = Field(default_factory=list)
     collected_fields: dict[str, bool] = Field(default_factory=dict)
     turn_index: int = Field(ge=1)
+    completed_stages: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Metadata from prior completed stages for handoff summary building.",
+    )
 
 
 class StageTurnOutput(BaseModel):
