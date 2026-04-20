@@ -1,0 +1,116 @@
+from __future__ import annotations
+
+import os
+from datetime import timedelta
+from uuid import uuid4
+
+from dotenv import load_dotenv
+from fastapi import Depends, FastAPI, HTTPException, Request, status
+from temporalio.client import Client
+from temporalio.service import RPCError, RPCStatusCode
+
+from app.models.pipeline import (
+    PipelineStartRequest,
+    PipelineStartResponse,
+    PipelineStatus,
+)
+from app.workflows.borrower_workflow import BorrowerWorkflow
+
+
+load_dotenv()
+
+app = FastAPI(title="Simple Agent Pipeline API", version="0.1.0")
+
+
+@app.on_event("startup")
+async def startup() -> None:
+    temporal_server = os.getenv("TEMPORAL_SERVER_URL", "localhost:7233")
+    temporal_namespace = os.getenv("TEMPORAL_NAMESPACE", "default")
+    task_queue = os.getenv("TEMPORAL_TASK_QUEUE", "borrower-pipeline-task-queue")
+
+    app.state.temporal_client = await Client.connect(
+        temporal_server,
+        namespace=temporal_namespace,
+    )
+    app.state.task_queue = task_queue
+
+
+def get_temporal_client(request: Request) -> Client:
+    client = getattr(request.app.state, "temporal_client", None)
+    if client is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Temporal client not initialized.",
+        )
+    return client
+
+
+def get_task_queue(request: Request) -> str:
+    task_queue = getattr(request.app.state, "task_queue", None)
+    if not task_queue:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Task queue not configured.",
+        )
+    return task_queue
+
+
+@app.get("/health")
+async def healthcheck() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.post(
+    "/pipelines",
+    response_model=PipelineStartResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def start_pipeline(
+    payload: PipelineStartRequest,
+    client: Client = Depends(get_temporal_client),
+    task_queue: str = Depends(get_task_queue),
+) -> PipelineStartResponse:
+    workflow_id = payload.workflow_id or f"pipeline-{payload.borrower.borrower_id}-{uuid4().hex[:8]}"
+
+    try:
+        handle = await client.start_workflow(
+            BorrowerWorkflow.run,
+            {"borrower": payload.borrower.model_dump(mode="json")},
+            id=workflow_id,
+            task_queue=task_queue,
+            execution_timeout=timedelta(minutes=10),
+        )
+    except RPCError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to start workflow: {exc}",
+        ) from exc
+
+    return PipelineStartResponse(
+        workflow_id=workflow_id,
+        run_id=handle.first_execution_run_id,
+        task_queue=task_queue,
+    )
+
+
+@app.get("/pipelines/{workflow_id}", response_model=PipelineStatus)
+async def get_pipeline_status(
+    workflow_id: str,
+    client: Client = Depends(get_temporal_client),
+) -> PipelineStatus:
+    handle = client.get_workflow_handle(workflow_id)
+
+    try:
+        status_payload = await handle.query(BorrowerWorkflow.get_status)
+    except RPCError as exc:
+        if exc.status == RPCStatusCode.NOT_FOUND:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Workflow '{workflow_id}' not found.",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to query workflow: {exc}",
+        ) from exc
+
+    return PipelineStatus.model_validate(status_payload)
