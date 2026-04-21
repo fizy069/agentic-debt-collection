@@ -1,0 +1,31 @@
+scripts/dev-launch.sh
+  0341583d519ccc77 7-12,62-66,72-77,79,84,89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "dd2e26db51fdd80d9cc558e19934817797a7e09f",
+  "prompts": {
+    "0341583d519ccc77": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "a3a10f12-397f-4581-abf6-30d0a1a627bc",
+        "model": "gpt-5.3-codex-xhigh"
+      },
+      "human_author": "fizy069",
+      "messages": [],
+      "total_additions": 20,
+      "total_deletions": 4,
+      "accepted_lines": 20,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_55bf61dfd6cf88": {
+      "author": "Mahir Ghadiali (mghadial)"
+    },
+    "h_7f63ecbcbb8eec": {
+      "author": "fizy069"
+    }
+  }
+}
