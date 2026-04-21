@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime, timedelta, timezone
 import logging
 from functools import lru_cache
 from pathlib import Path
@@ -291,11 +292,37 @@ def _stage_defaults(
     return AgentChannel.CHAT, None, system_prompt
 
 
-def _build_turn_directives(
-    updated_fields: dict[str, bool],
-    missing_fields: list[str],
-    transition_reason: str,
+def _final_notice_expiry_date(
+    *,
+    base_date: date | None = None,
+    window_days: int = 7,
 ) -> str:
+    anchor = base_date or datetime.now(timezone.utc).date()
+    return (anchor + timedelta(days=window_days)).isoformat()
+
+
+def _build_turn_directives(
+    *,
+    stage: PipelineStage,
+    stage_complete: bool,
+    final_notice_expiry: str | None = None,
+) -> str:
+    if stage == PipelineStage.FINAL_NOTICE:
+        expiry = final_notice_expiry or _final_notice_expiry_date()
+        completion_instruction = (
+            "Record the borrower's final response and close the conversation in a "
+            "declarative statement. Do not ask a follow-up question."
+            if stage_complete
+            else "Ask one concrete acknowledgement question and wait for the "
+            "borrower's response."
+        )
+        return (
+            "Respond in 3-6 concise sentences. "
+            f"Use this exact hard expiry date: {expiry}. "
+            "Never use placeholders (for example, '[insert hard expiry date]'). "
+            f"{completion_instruction}"
+        )
+
     return (
         "Respond in 3-6 concise sentences. "
         "If stage is incomplete, ask one concrete follow-up question. "
@@ -375,24 +402,37 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
     )
 
     missing_fields = [key for key, value in updated_fields.items() if not value]
+    final_notice_expiry = (
+        _final_notice_expiry_date()
+        if turn_input.stage == PipelineStage.FINAL_NOTICE
+        else None
+    )
     report = ContextBudgetReport(limit=MAX_CONTEXT_TOKENS)
 
     report.add("system_prompt", system_prompt)
 
     snapshot_section = f"Borrower snapshot:\n{_borrower_snapshot(turn_input.borrower)}"
-    turn_meta_section = (
-        f"Current stage: {turn_input.stage.value}\n"
-        f"Turn index in stage: {turn_input.turn_index}\n"
-        f"Borrower message: {turn_input.borrower_message}\n"
-        f"Collected fields: {updated_fields}\n"
-        f"Missing fields: {missing_fields if missing_fields else 'none'}\n"
-        f"Transition reason: {transition_reason}"
-    )
+    turn_meta_lines = [
+        f"Current stage: {turn_input.stage.value}",
+        f"Turn index in stage: {turn_input.turn_index}",
+        f"Borrower message: {turn_input.borrower_message}",
+        f"Collected fields: {updated_fields}",
+        f"Missing fields: {missing_fields if missing_fields else 'none'}",
+        f"Transition reason: {transition_reason}",
+        f"Stage complete this turn: {stage_complete}",
+    ]
+    if final_notice_expiry:
+        turn_meta_lines.append(f"Hard expiry date: {final_notice_expiry}")
+    turn_meta_section = "\n".join(turn_meta_lines)
     transcript_section = (
         "Recent transcript:\n"
         f"{_format_recent_transcript(turn_input.transcript)}"
     )
-    directives_section = _build_turn_directives(updated_fields, missing_fields, transition_reason)
+    directives_section = _build_turn_directives(
+        stage=turn_input.stage,
+        stage_complete=stage_complete,
+        final_notice_expiry=final_notice_expiry,
+    )
 
     handoff_section = ""
     if turn_input.completed_stages:
