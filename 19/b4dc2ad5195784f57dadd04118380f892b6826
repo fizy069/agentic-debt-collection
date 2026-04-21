@@ -1,0 +1,35 @@
+app/prompts/final_notice.txt
+  dfa2abdf840cd001 16-17
+app/activities/agents.py
+  dfa2abdf840cd001 3,295-303,305-308,310-325,405-409,415-426,431-435
+tests/test_stage_directives.py
+  dfa2abdf840cd001 1-43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "19b4dc2ad5195784f57dadd04118380f892b6826",
+  "prompts": {
+    "dfa2abdf840cd001": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "473f9b6e-d214-4ce4-8e19-5cafb27c7648",
+        "model": "gpt-5.3-codex-xhigh"
+      },
+      "human_author": "fizy069",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 531,
+      "overriden_lines": 2
+    }
+  },
+  "humans": {
+    "h_55bf61dfd6cf88": {
+      "author": "Mahir Ghadiali (mghadial)"
+    },
+    "h_7f63ecbcbb8eec": {
+      "author": "fizy069"
+    }
+  }
+}
