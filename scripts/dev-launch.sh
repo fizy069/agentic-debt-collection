@@ -4,6 +4,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
+LOG_DIR="$PROJECT_ROOT/logs"
+mkdir -p "$LOG_DIR"
+
+PID_TEMPORAL=""
+PID_WORKER=""
+PID_API=""
 
 SKIP_INSTALL=false
 OPEN_UI=false
@@ -53,24 +59,34 @@ echo ""
 cleanup() {
   echo ""
   echo "Shutting down..."
-  kill $PID_TEMPORAL $PID_WORKER $PID_API 2>/dev/null || true
+  for pid in "$PID_TEMPORAL" "$PID_WORKER" "$PID_API"; do
+    if [[ -n "$pid" ]]; then
+      kill "$pid" 2>/dev/null || true
+    fi
+  done
   wait 2>/dev/null || true
   echo "All processes stopped."
 }
 trap cleanup EXIT INT TERM
 
+echo "Log files:"
+echo "  Temporal: $LOG_DIR/temporal.log"
+echo "  Worker:   $LOG_DIR/worker.log"
+echo "  API:      $LOG_DIR/api.log"
+echo ""
+
 echo "Starting Temporal server..."
-temporal server start-dev &
+temporal server start-dev > >(tee -a "$LOG_DIR/temporal.log") 2>&1 &
 PID_TEMPORAL=$!
 sleep 3
 
 echo "Starting worker..."
-"$PYTHON" -m app.worker &
+"$PYTHON" -m app.worker > >(tee -a "$LOG_DIR/worker.log") 2>&1 &
 PID_WORKER=$!
 sleep 2
 
 echo "Starting API server..."
-"$PYTHON" -m uvicorn app.main:app --host 127.0.0.1 --port 8000 &
+"$PYTHON" -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > >(tee -a "$LOG_DIR/api.log") 2>&1 &
 PID_API=$!
 sleep 1
 
