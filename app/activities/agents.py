@@ -21,15 +21,35 @@ from app.models.pipeline import (
 )
 from app.services.anthropic_client import AnthropicClient
 from app.services.handoff import build_handoff_summary
-from app.services.token_budget import enforce_context_budget
+from app.services.summarization import (
+    build_overflow_prompt,
+    get_policy_for_stage,
+)
+from app.services.token_budget import (
+    MAX_CONTEXT_TOKENS,
+    ContextBudgetReport,
+    count_tokens,
+    enforce_context_budget,
+    truncate_to_budget,
+)
 
 
-@lru_cache(maxsize=1)
+_cached_client: AnthropicClient | None = None
+
+
 def _get_anthropic_client() -> AnthropicClient:
-    # Ensure project .env is loaded before first client construction.
+    global _cached_client
     env_path = Path(__file__).resolve().parents[2] / ".env"
     load_dotenv(dotenv_path=env_path, override=True)
-    return AnthropicClient()
+
+    if _cached_client is not None and _cached_client._client is not None:
+        return _cached_client
+
+    if _cached_client is not None and _cached_client._client is None:
+        logger.warning("Cached client had no API key – rebuilding")
+
+    _cached_client = AnthropicClient()
+    return _cached_client
 
 
 def _trim_summary(text: str, max_chars: int = 240) -> str:
@@ -271,6 +291,74 @@ def _stage_defaults(
     return AgentChannel.CHAT, None, system_prompt
 
 
+def _build_turn_directives(
+    updated_fields: dict[str, bool],
+    missing_fields: list[str],
+    transition_reason: str,
+) -> str:
+    return (
+        "Respond in 3-6 concise sentences. "
+        "If stage is incomplete, ask one concrete follow-up question. "
+        "If complete, provide a brief transition-ready response."
+    )
+
+
+async def _compress_overflow(
+    client: AnthropicClient,
+    stage: PipelineStage,
+    content: str,
+    target_tokens: int,
+) -> tuple[str, bool, bool]:
+    """Attempt LLM-assisted overflow compression with deterministic fallback.
+
+    Returns (compressed_text, used_llm_summary, used_fallback).
+    """
+    policy = get_policy_for_stage(stage.value)
+    if not policy:
+        logger.info(
+            "overflow_summarize  stage=%s  action=deterministic_truncation  "
+            "reason=no_policy  input_tokens=%d  target=%d",
+            stage.value, count_tokens(content), target_tokens,
+        )
+        return truncate_to_budget(content, target_tokens), False, True
+
+    sys_prompt, usr_prompt = build_overflow_prompt(policy, content, target_tokens)
+
+    try:
+        logger.info(
+            "overflow_summarize  stage=%s  action=llm_call  "
+            "input_tokens=%d  target=%d  policy_stage=%s",
+            stage.value, count_tokens(content), target_tokens, policy.stage,
+        )
+        result = await client.summarize(
+            system_prompt=sys_prompt,
+            user_prompt=usr_prompt,
+            max_tokens=min(target_tokens, 200),
+        )
+        compressed = result.text
+        compressed_tokens = count_tokens(compressed)
+        if compressed_tokens <= target_tokens:
+            logger.info(
+                "overflow_summarize  stage=%s  action=llm_accepted  "
+                "output_tokens=%d  target=%d  used_fallback=%s",
+                stage.value, compressed_tokens, target_tokens, result.used_fallback,
+            )
+            return compressed, True, result.used_fallback
+        logger.warning(
+            "overflow_summarize  stage=%s  action=llm_over_budget  "
+            "output_tokens=%d  target=%d  applying_hard_truncation",
+            stage.value, compressed_tokens, target_tokens,
+        )
+        return truncate_to_budget(compressed, target_tokens), True, True
+    except Exception:
+        logger.exception(
+            "overflow_summarize  stage=%s  action=llm_failed  "
+            "falling_back_to_truncation",
+            stage.value,
+        )
+        return truncate_to_budget(content, target_tokens), False, True
+
+
 async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
     turn_input = StageTurnInput.model_validate(payload)
     logger.info(
@@ -287,32 +375,100 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
     )
 
     missing_fields = [key for key, value in updated_fields.items() if not value]
-    user_prompt = (
-        "Continue the debt-collection conversation for the current stage.\n\n"
-        f"Borrower snapshot:\n{_borrower_snapshot(turn_input.borrower)}\n\n"
+    report = ContextBudgetReport(limit=MAX_CONTEXT_TOKENS)
+
+    report.add("system_prompt", system_prompt)
+
+    snapshot_section = f"Borrower snapshot:\n{_borrower_snapshot(turn_input.borrower)}"
+    turn_meta_section = (
         f"Current stage: {turn_input.stage.value}\n"
         f"Turn index in stage: {turn_input.turn_index}\n"
         f"Borrower message: {turn_input.borrower_message}\n"
         f"Collected fields: {updated_fields}\n"
         f"Missing fields: {missing_fields if missing_fields else 'none'}\n"
-        f"Transition reason: {transition_reason}\n\n"
-        "Recent transcript:\n"
-        f"{_format_recent_transcript(turn_input.transcript)}\n\n"
-        "Respond in 3-6 concise sentences. "
-        "If stage is incomplete, ask one concrete follow-up question. "
-        "If complete, provide a brief transition-ready response."
+        f"Transition reason: {transition_reason}"
     )
+    transcript_section = (
+        "Recent transcript:\n"
+        f"{_format_recent_transcript(turn_input.transcript)}"
+    )
+    directives_section = _build_turn_directives(updated_fields, missing_fields, transition_reason)
 
+    handoff_section = ""
     if turn_input.completed_stages:
-        handoff_json = build_handoff_summary(
+        handoff_section = build_handoff_summary(
             turn_input.completed_stages,
             turn_input.borrower.model_dump(mode="json"),
             [msg.model_dump(mode="json") for msg in turn_input.transcript],
+            target_stage=turn_input.stage.value,
         )
+        report.handoff_tokens = report.add("handoff", handoff_section)
+
+    report.add("snapshot", snapshot_section)
+    report.add("turn_meta", turn_meta_section)
+    report.add("transcript", transcript_section)
+    report.add("directives", directives_section)
+    report.pre_overflow_tokens = report.total_tokens
+
+    if report.total_tokens > MAX_CONTEXT_TOKENS:
+        report.overflow_detected = True
+        logger.info(
+            "Context overflow detected: %d > %d tokens, attempting compression",
+            report.total_tokens, MAX_CONTEXT_TOKENS,
+        )
+
+        system_tokens = count_tokens(system_prompt)
+        available = MAX_CONTEXT_TOKENS - system_tokens
+        directives_tokens = count_tokens(directives_section)
+        turn_meta_tokens = count_tokens(turn_meta_section)
+        reserved = directives_tokens + turn_meta_tokens
+        compressible_budget = max(50, available - reserved)
+
+        compressible_content = ""
+        if handoff_section:
+            compressible_content += f"Prior stage context:\n{handoff_section}\n\n"
+        compressible_content += f"{snapshot_section}\n\n{transcript_section}"
+
+        client = _get_anthropic_client()
+        compressed, used_llm, used_fallback = await _compress_overflow(
+            client, turn_input.stage, compressible_content, compressible_budget,
+        )
+        report.overflow_summary_used = used_llm
+        report.overflow_fallback_used = used_fallback
+        logger.info(
+            "overflow_complete  stage=%s  turn=%d  "
+            "pre_tokens=%d  compressed_tokens=%d  "
+            "used_llm=%s  used_fallback=%s",
+            turn_input.stage.value, turn_input.turn_index,
+            report.pre_overflow_tokens, count_tokens(compressed),
+            used_llm, used_fallback,
+        )
+
         user_prompt = (
-            f"Prior stage context:\n{handoff_json}\n\n"
-            + user_prompt
+            "Continue the debt-collection conversation for the current stage.\n\n"
+            f"{compressed}\n\n"
+            f"{turn_meta_section}\n\n"
+            f"{directives_section}"
         )
+
+        report.sections.clear()
+        report.add("system_prompt", system_prompt)
+        report.add("compressed_context", compressed)
+        report.add("turn_meta", turn_meta_section)
+        report.add("directives", directives_section)
+        report.post_overflow_tokens = report.total_tokens
+    else:
+        user_prompt_parts = ["Continue the debt-collection conversation for the current stage.\n"]
+        if handoff_section:
+            user_prompt_parts.append(f"Prior stage context:\n{handoff_section}\n")
+        user_prompt_parts.extend([
+            f"{snapshot_section}\n",
+            f"{turn_meta_section}\n",
+            f"{transcript_section}\n",
+            directives_section,
+        ])
+        user_prompt = "\n".join(user_prompt_parts)
+        report.post_overflow_tokens = report.total_tokens
 
     system_prompt, user_prompt = enforce_context_budget(
         system_prompt, user_prompt,
@@ -321,6 +477,12 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
     llm_result = await _get_anthropic_client().generate(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
+    )
+
+    budget_metadata = report.to_metadata()
+    logger.info(
+        "stage_turn_budget  stage=%s  turn=%d  %s",
+        turn_input.stage.value, turn_input.turn_index, budget_metadata,
     )
 
     turn_output = StageTurnOutput(
@@ -337,6 +499,7 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
             "model": llm_result.model,
             "used_fallback": llm_result.used_fallback,
             "turn_index": turn_input.turn_index,
+            **budget_metadata,
         },
     )
     logger.info(

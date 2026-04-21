@@ -8,6 +8,7 @@ for budget enforcement.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 
 import tiktoken
 
@@ -65,3 +66,47 @@ def enforce_context_budget(
         system_tokens, user_tokens, total, max_total, available_for_user,
     )
     return system_prompt, truncate_to_budget(user_prompt, available_for_user)
+
+
+@dataclass
+class SectionTokenReport:
+    """Token count for a single named prompt section."""
+
+    name: str
+    tokens: int
+
+
+@dataclass
+class ContextBudgetReport:
+    """Full token accounting for a prompt assembly pass."""
+
+    sections: list[SectionTokenReport] = field(default_factory=list)
+    total_tokens: int = 0
+    limit: int = MAX_CONTEXT_TOKENS
+    overflow_detected: bool = False
+    overflow_summary_used: bool = False
+    overflow_fallback_used: bool = False
+    handoff_tokens: int = 0
+    pre_overflow_tokens: int = 0
+    post_overflow_tokens: int = 0
+
+    def add(self, name: str, text: str) -> int:
+        """Record a section and return its token count."""
+        tokens = count_tokens(text)
+        self.sections.append(SectionTokenReport(name=name, tokens=tokens))
+        self.total_tokens = sum(s.tokens for s in self.sections)
+        return tokens
+
+    def to_metadata(self) -> dict[str, object]:
+        """Produce a dict suitable for inclusion in stage output metadata."""
+        return {
+            "budget_limit": self.limit,
+            "total_tokens": self.total_tokens,
+            "overflow_detected": self.overflow_detected,
+            "overflow_summary_used": self.overflow_summary_used,
+            "overflow_fallback_used": self.overflow_fallback_used,
+            "handoff_tokens": self.handoff_tokens,
+            "pre_overflow_tokens": self.pre_overflow_tokens,
+            "post_overflow_tokens": self.post_overflow_tokens,
+            "sections": {s.name: s.tokens for s in self.sections},
+        }

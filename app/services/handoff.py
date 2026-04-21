@@ -1,7 +1,8 @@
 """Deterministic handoff summary builder.
 
 Produces a flat JSON object from completed stage metadata and transcript,
-guaranteed to fit within MAX_HANDOFF_TOKENS.  No LLM call required.
+guaranteed to fit within MAX_HANDOFF_TOKENS via priority-based pruning.
+No LLM call required for the deterministic path.
 """
 
 from __future__ import annotations
@@ -11,6 +12,10 @@ import logging
 from typing import Any
 
 from app.services.token_budget import MAX_HANDOFF_TOKENS, count_tokens
+from app.services.summarization import (
+    get_policy_for_stage,
+    prune_to_budget,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,22 +70,12 @@ def _extract_key_exchanges(
     return pairs[-max_pairs:]
 
 
-def build_handoff_summary(
+def _build_raw_summary(
     completed_stages: list[dict[str, Any]],
     borrower: dict[str, Any],
     transcript: list[dict[str, Any]],
-) -> str:
-    """Build a flat, deterministic JSON handoff summary.
-
-    Args:
-        completed_stages: List of dicts, each with keys ``stage``,
-            ``collected_fields``, ``transition_reason``, ``turns``.
-        borrower: Borrower data dict (from BorrowerRequest).
-        transcript: Full conversation transcript as list of message dicts.
-
-    Returns:
-        Compact JSON string guaranteed to be <= MAX_HANDOFF_TOKENS tokens.
-    """
+) -> dict[str, Any]:
+    """Assemble the full handoff summary dict before any pruning."""
     summary: dict[str, Any] = {
         "stages_covered": [s["stage"] for s in completed_stages],
         "borrower_id": borrower.get("borrower_id", ""),
@@ -104,18 +99,45 @@ def build_handoff_summary(
         )
     summary["key_exchanges"] = all_exchanges
     summary["borrower_stance"] = _estimate_stance(transcript)
+    return summary
+
+
+def build_handoff_summary(
+    completed_stages: list[dict[str, Any]],
+    borrower: dict[str, Any],
+    transcript: list[dict[str, Any]],
+    target_stage: str | None = None,
+) -> str:
+    """Build a flat, deterministic JSON handoff summary.
+
+    Args:
+        completed_stages: List of dicts, each with keys ``stage``,
+            ``collected_fields``, ``transition_reason``, ``turns``.
+        borrower: Borrower data dict (from BorrowerRequest).
+        transcript: Full conversation transcript as list of message dicts.
+        target_stage: The stage that will *consume* this summary, used to
+            look up the correct summarization policy for priority pruning.
+
+    Returns:
+        Compact JSON string **guaranteed** to be <= MAX_HANDOFF_TOKENS tokens.
+    """
+    summary = _build_raw_summary(completed_stages, borrower, transcript)
+    policy = get_policy_for_stage(target_stage) if target_stage else None
 
     result = json.dumps(summary, separators=(",", ":"))
+    raw_tokens = count_tokens(result)
 
-    while count_tokens(result) > MAX_HANDOFF_TOKENS and summary["key_exchanges"]:
-        summary["key_exchanges"].pop(0)
-        result = json.dumps(summary, separators=(",", ":"))
-
-    if count_tokens(result) > MAX_HANDOFF_TOKENS:
-        logger.warning(
-            "Handoff summary still exceeds %d tokens (%d) after trimming "
-            "exchanges; fixed fields alone are too large.",
-            MAX_HANDOFF_TOKENS, count_tokens(result),
+    if raw_tokens <= MAX_HANDOFF_TOKENS:
+        logger.info(
+            "Handoff summary fits budget: %d/%d tokens", raw_tokens, MAX_HANDOFF_TOKENS,
         )
+        return result
 
+    logger.info(
+        "Handoff summary exceeds budget (%d > %d), applying priority pruning",
+        raw_tokens, MAX_HANDOFF_TOKENS,
+    )
+    result = prune_to_budget(summary, policy, MAX_HANDOFF_TOKENS)
+    final_tokens = count_tokens(result)
+    logger.info("Handoff summary after pruning: %d/%d tokens", final_tokens, MAX_HANDOFF_TOKENS)
     return result
