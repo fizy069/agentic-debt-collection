@@ -28,9 +28,11 @@ from app.services.summarization import (
 )
 from app.services.token_budget import (
     MAX_CONTEXT_TOKENS,
+    OVERSIZED_MESSAGE_REPLY,
     ContextBudgetReport,
     count_tokens,
     enforce_context_budget,
+    is_borrower_message_oversized,
     truncate_to_budget,
 )
 
@@ -392,6 +394,34 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
         "stage_turn_start  stage=%s  turn=%d  borrower=%s",
         turn_input.stage.value, turn_input.turn_index, turn_input.borrower.borrower_id,
     )
+
+    msg_tokens = count_tokens(turn_input.borrower_message)
+    if is_borrower_message_oversized(turn_input.borrower_message):
+        logger.warning(
+            "borrower_message_oversized  stage=%s  turn=%d  tokens=%d  "
+            "action=hardcoded_reply",
+            turn_input.stage.value, turn_input.turn_index, msg_tokens,
+        )
+        channel, next_stage, _ = _stage_defaults(turn_input.stage)
+        return StageTurnOutput(
+            stage=turn_input.stage,
+            channel=channel,
+            assistant_reply=OVERSIZED_MESSAGE_REPLY,
+            summary=OVERSIZED_MESSAGE_REPLY,
+            decision="borrower_message_oversized",
+            stage_complete=False,
+            collected_fields=turn_input.collected_fields,
+            transition_reason="borrower_message_too_long",
+            next_stage=turn_input.stage,
+            metadata={
+                "model": "none",
+                "used_fallback": False,
+                "turn_index": turn_input.turn_index,
+                "borrower_message_oversized": True,
+                "borrower_message_tokens": msg_tokens,
+            },
+        ).model_dump(mode="json")
+
     channel, next_stage, system_prompt = _stage_defaults(turn_input.stage)
 
     updated_fields, stage_complete, transition_reason, decision = _evaluate_stage_turn(

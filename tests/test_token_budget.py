@@ -5,11 +5,14 @@ from __future__ import annotations
 import pytest
 
 from app.services.token_budget import (
+    MAX_BORROWER_MESSAGE_TOKENS,
     MAX_CONTEXT_TOKENS,
     MAX_HANDOFF_TOKENS,
+    OVERSIZED_MESSAGE_REPLY,
     ContextBudgetReport,
     count_tokens,
     enforce_context_budget,
+    is_borrower_message_oversized,
     truncate_to_budget,
 )
 
@@ -113,9 +116,34 @@ class TestContextBudgetReport:
         assert report.total_tokens == t1 + t2
 
 
+class TestBorrowerMessageGuard:
+    def test_short_message_not_oversized(self):
+        assert is_borrower_message_oversized("Hello, I need help.") is False
+
+    def test_long_message_is_oversized(self):
+        text = "word " * 5000
+        assert is_borrower_message_oversized(text) is True
+
+    def test_exact_limit_not_oversized(self):
+        text = "a " * 1000
+        tokens = count_tokens(text)
+        if tokens <= MAX_BORROWER_MESSAGE_TOKENS:
+            assert is_borrower_message_oversized(text) is False
+
+    def test_empty_message_not_oversized(self):
+        assert is_borrower_message_oversized("") is False
+
+
 class TestBudgetConstants:
     def test_context_limit(self):
         assert MAX_CONTEXT_TOKENS == 2000
 
     def test_handoff_limit(self):
         assert MAX_HANDOFF_TOKENS == 500
+
+    def test_borrower_message_limit(self):
+        assert MAX_BORROWER_MESSAGE_TOKENS == 2000
+
+    def test_oversized_reply_is_nonempty_string(self):
+        assert isinstance(OVERSIZED_MESSAGE_REPLY, str)
+        assert len(OVERSIZED_MESSAGE_REPLY) > 0

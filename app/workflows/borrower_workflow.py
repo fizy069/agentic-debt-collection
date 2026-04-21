@@ -144,6 +144,11 @@ class BorrowerWorkflow:
                     borrower_message = borrower_turn["message"]
                     message_id = borrower_turn.get("message_id")
 
+                    turn_index = int(self._status["stage_turn_counts"][stage_key]) + 1
+                    workflow.logger.info(
+                        "Executing turn %d for stage %s", turn_index, stage_key,
+                    )
+
                     self._append_transcript(
                         role=ConversationRole.BORROWER,
                         stage=stage,
@@ -151,10 +156,6 @@ class BorrowerWorkflow:
                         message_id=message_id,
                     )
 
-                    turn_index = int(self._status["stage_turn_counts"][stage_key]) + 1
-                    workflow.logger.info(
-                        "Executing turn %d for stage %s", turn_index, stage_key,
-                    )
                     stage_input = StageTurnInput(
                         borrower=borrower,
                         stage=stage,
@@ -175,6 +176,11 @@ class BorrowerWorkflow:
                         retry_policy=retry_policy,
                     )
                     turn_output = StageTurnOutput.model_validate(turn_output_payload)
+
+                    if turn_output.metadata.get("borrower_message_oversized"):
+                        self._status["transcript"][-1]["text"] = (
+                            "[oversized message — borrower asked to reply concisely]"
+                        )
 
                     self._status["stage_turn_counts"][stage_key] = turn_index
                     self._status["stage_collected_fields"][stage_key] = (

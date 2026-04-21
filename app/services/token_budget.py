@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 
 MAX_CONTEXT_TOKENS = 2000
 MAX_HANDOFF_TOKENS = 500
+MAX_BORROWER_MESSAGE_TOKENS = 2000
+
+OVERSIZED_MESSAGE_REPLY = "Please reply concisely with the answer."
 
 _encoding = tiktoken.get_encoding("cl100k_base")
 
@@ -25,6 +28,11 @@ def count_tokens(text: str) -> int:
     if not text:
         return 0
     return len(_encoding.encode(text))
+
+
+def is_borrower_message_oversized(text: str) -> bool:
+    """Return True if the borrower message exceeds the input token limit."""
+    return count_tokens(text) > MAX_BORROWER_MESSAGE_TOKENS
 
 
 def truncate_to_budget(text: str, max_tokens: int) -> str:

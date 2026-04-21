@@ -76,7 +76,7 @@ class ConversationMessage(BaseModel):
 class StageTurnInput(BaseModel):
     borrower: BorrowerRequest
     stage: PipelineStage
-    borrower_message: str = Field(min_length=1, max_length=1500)
+    borrower_message: str = Field(min_length=1, max_length=12000)
     transcript: list[ConversationMessage] = Field(default_factory=list)
     collected_fields: dict[str, bool] = Field(default_factory=dict)
     turn_index: int = Field(ge=1)
@@ -100,7 +100,7 @@ class StageTurnOutput(BaseModel):
 
 
 class BorrowerMessageRequest(BaseModel):
-    message: str = Field(min_length=1, max_length=1500)
+    message: str = Field(min_length=1, max_length=12000)
     message_id: str | None = Field(
         default=None,
         max_length=64,

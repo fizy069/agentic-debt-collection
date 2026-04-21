@@ -12,7 +12,13 @@ from unittest.mock import patch
 import pytest
 
 from app.activities.agents import _run_stage_turn
-from app.services.token_budget import MAX_CONTEXT_TOKENS, MAX_HANDOFF_TOKENS, count_tokens
+from app.services.token_budget import (
+    MAX_BORROWER_MESSAGE_TOKENS,
+    MAX_CONTEXT_TOKENS,
+    MAX_HANDOFF_TOKENS,
+    OVERSIZED_MESSAGE_REPLY,
+    count_tokens,
+)
 
 
 def _make_payload(
@@ -198,3 +204,80 @@ class TestOverflowPath:
         ]
         for key in required_keys:
             assert key in meta, f"Missing metadata key: {key}"
+
+
+def _make_oversized_payload(stage: str = "assessment"):
+    """Build a payload whose borrower_message exceeds MAX_BORROWER_MESSAGE_TOKENS."""
+    oversized_msg = "word " * 2300
+    assert count_tokens(oversized_msg) > MAX_BORROWER_MESSAGE_TOKENS
+
+    return {
+        "borrower": {
+            "borrower_id": "b-oversized-test",
+            "account_reference": "acct-1234",
+            "debt_amount": 1000.00,
+            "currency": "USD",
+            "days_past_due": 30,
+            "borrower_message": "I need help.",
+            "notes": None,
+        },
+        "stage": stage,
+        "borrower_message": oversized_msg,
+        "transcript": [],
+        "collected_fields": {},
+        "turn_index": 1,
+        "completed_stages": [],
+    }
+
+
+class TestOversizedBorrowerMessageGuard:
+    """Verify oversized borrower messages get a fixed reply with no LLM call."""
+
+    @pytest.mark.asyncio
+    async def test_oversized_message_returns_fixed_reply(self):
+        payload = _make_oversized_payload()
+        result = await _run_stage_turn(payload)
+
+        assert result["assistant_reply"] == OVERSIZED_MESSAGE_REPLY
+        assert result["summary"] == OVERSIZED_MESSAGE_REPLY
+
+    @pytest.mark.asyncio
+    async def test_oversized_message_metadata_flags(self):
+        payload = _make_oversized_payload()
+        result = await _run_stage_turn(payload)
+
+        meta = result["metadata"]
+        assert meta["borrower_message_oversized"] is True
+        assert meta["borrower_message_tokens"] > MAX_BORROWER_MESSAGE_TOKENS
+        assert meta["model"] == "none"
+
+    @pytest.mark.asyncio
+    async def test_oversized_message_keeps_stage_incomplete(self):
+        payload = _make_oversized_payload()
+        result = await _run_stage_turn(payload)
+
+        assert result["stage_complete"] is False
+        assert result["decision"] == "borrower_message_oversized"
+        assert result["transition_reason"] == "borrower_message_too_long"
+        assert result["next_stage"] == payload["stage"]
+
+    @pytest.mark.asyncio
+    async def test_oversized_guard_preserves_collected_fields(self):
+        payload = _make_oversized_payload(stage="resolution")
+        payload["collected_fields"] = {"options_reviewed": True}
+        result = await _run_stage_turn(payload)
+
+        assert result["collected_fields"] == {"options_reviewed": True}
+
+    @pytest.mark.asyncio
+    async def test_normal_message_not_blocked(self):
+        payload = _make_payload(
+            stage="assessment",
+            num_transcript_pairs=1,
+            msg_len=20,
+            completed_stages=[],
+        )
+        result = await _run_stage_turn(payload)
+
+        assert result["assistant_reply"] != OVERSIZED_MESSAGE_REPLY
+        assert result["metadata"].get("borrower_message_oversized") is None
