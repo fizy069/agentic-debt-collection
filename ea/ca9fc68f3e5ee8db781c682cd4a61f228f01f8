@@ -1,0 +1,64 @@
+tests/test_handoff.py
+  a239fb2857d2f316 1-177
+app/services/token_budget.py
+  a239fb2857d2f316 11,69-112
+tests/test_token_budget.py
+  a239fb2857d2f316 1-121
+tests/test_anthropic_client.py
+  a239fb2857d2f316 1-62
+app/services/summarization.py
+  a239fb2857d2f316 1-251
+app/services/anthropic_client.py
+  cce046c75e8597dd 8-14,56-59,122,133,137,160,166,169-170,237,244
+  a239fb2857d2f316 3,35-45,62-121,123,161-163,173,182-236,238-242
+tests/test_summarization.py
+  a239fb2857d2f316 1-154
+app/services/handoff.py
+  a239fb2857d2f316 4-5,15-18,73,77-78,102,105-111,113-132,134,136-142
+tests/test_overflow_integration.py
+  a239fb2857d2f316 1-200
+app/activities/agents.py
+  a239fb2857d2f316 24-34,294-361,378-383,389-391,393,395,397,399,403-444,446,448-451,454-472,482-487,502
+  cce046c75e8597dd 37,41,44-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "eaca9fc68f3e5ee8db781c682cd4a61f228f01f8",
+  "prompts": {
+    "a239fb2857d2f316": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "a4a43211-d178-45d4-b1e8-f431e6296ac2",
+        "model": "claude-4.6-opus-max"
+      },
+      "human_author": "fizy069",
+      "messages": [],
+      "total_additions": 1374,
+      "total_deletions": 97,
+      "accepted_lines": 1363,
+      "overriden_lines": 0
+    },
+    "cce046c75e8597dd": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "d23e3aba-b283-4d98-b1de-328ff1910ca9",
+        "model": "claude-4.6-opus-max"
+      },
+      "human_author": "fizy069",
+      "messages": [],
+      "total_additions": 111,
+      "total_deletions": 27,
+      "accepted_lines": 90,
+      "overriden_lines": 6
+    }
+  },
+  "humans": {
+    "h_55bf61dfd6cf88": {
+      "author": "Mahir Ghadiali (mghadial)"
+    },
+    "h_7f63ecbcbb8eec": {
+      "author": "fizy069"
+    }
+  }
+}
