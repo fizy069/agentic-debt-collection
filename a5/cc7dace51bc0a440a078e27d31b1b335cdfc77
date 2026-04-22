@@ -1,0 +1,33 @@
+app/activities/agents.py
+  bcd91fd316d659f5 42-46,70-90,577-581,592-593
+tests/test_assessment_opening_disclosure.py
+  bcd91fd316d659f5 1-87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "a5cc7dace51bc0a440a078e27d31b1b335cdfc77",
+  "prompts": {
+    "bcd91fd316d659f5": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "3401db9a-0a98-45a1-9cc4-500f6132fa34",
+        "model": "gpt-5.4-xhigh"
+      },
+      "human_author": "fizy069",
+      "messages": [],
+      "total_additions": 134,
+      "total_deletions": 16,
+      "accepted_lines": 713,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_55bf61dfd6cf88": {
+      "author": "Mahir Ghadiali (mghadial)"
+    },
+    "h_7f63ecbcbb8eec": {
+      "author": "fizy069"
+    }
+  }
+}
