@@ -1,0 +1,39 @@
+app/activities/agents.py
+  3609448156e5b184 18,25-36
+tests/test_compliance.py
+  3609448156e5b184 1-436
+app/workflows/borrower_workflow.py
+  3609448156e5b184 14,134,172,183-188,221-235
+app/models/pipeline.py
+  3609448156e5b184 76-86,98,112,141
+app/services/compliance.py
+  3609448156e5b184 1-245
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "0af8e6c9e723941325748e4467d975dfc22ad7ff",
+  "prompts": {
+    "3609448156e5b184": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e6eb2259-1a2c-4533-9c1f-762d65a3fdd3",
+        "model": "claude-4.6-opus-max"
+      },
+      "human_author": "fizy069",
+      "messages": [],
+      "total_additions": 745,
+      "total_deletions": 11,
+      "accepted_lines": 733,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_55bf61dfd6cf88": {
+      "author": "Mahir Ghadiali (mghadial)"
+    },
+    "h_7f63ecbcbb8eec": {
+      "author": "fizy069"
+    }
+  }
+}
