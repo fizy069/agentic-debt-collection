@@ -1,0 +1,49 @@
+.env.example
+  5cc849f2c4444136 11-34
+app/static/test.html
+  5cc849f2c4444136 44-64,104-108,111,126-127,165-167,224-225,230,235-281
+app/worker.py
+  5cc849f2c4444136 14,16,46-52
+app/main.py
+  5cc849f2c4444136 3,8,25-28,53,56-61,92-114,131,133-138,143-146,205-261
+app/models/pipeline.py
+  5cc849f2c4444136 21-30,97-120,149-195,216-217
+app/workflows/borrower_workflow.py
+  5cc849f2c4444136 19-24,27,38,50-56,85-93,105-144,169-337,341-343,356-371,396-425,465,467-469,472-475
+README.md
+  5cc849f2c4444136 133-183
+app/services/prompt_loader.py
+  5cc849f2c4444136 1-20
+app/services/vapi_client.py
+  5cc849f2c4444136 1-398
+tests/test_vapi_voice.py
+  5cc849f2c4444136 1-385
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "47d8f7ecfa39a2e9f8968d9119daba85324ba9d2",
+  "prompts": {
+    "5cc849f2c4444136": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "db7e8bfc-668b-4f23-8108-ba86e37b6851",
+        "model": "gpt-5.3-codex-xhigh"
+      },
+      "human_author": "fizy069",
+      "messages": [],
+      "total_additions": 1451,
+      "total_deletions": 61,
+      "accepted_lines": 1512,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_55bf61dfd6cf88": {
+      "author": "Mahir Ghadiali (mghadial)"
+    },
+    "h_7f63ecbcbb8eec": {
+      "author": "fizy069"
+    }
+  }
+}
