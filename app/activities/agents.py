@@ -39,6 +39,11 @@ from app.services.token_budget import (
 
 _cached_client: AnthropicClient | None = None
 
+_ASSESSMENT_OPENING_DISCLOSURE = (
+    "I am an AI agent acting on behalf of the company, and this conversation "
+    "is being logged and recorded."
+)
+
 
 def _get_anthropic_client() -> AnthropicClient:
     global _cached_client
@@ -60,6 +65,27 @@ def _trim_summary(text: str, max_chars: int = 240) -> str:
     if len(compact) <= max_chars:
         return compact
     return f"{compact[: max_chars - 3]}..."
+
+
+def _prepend_assessment_opening_disclosure(
+    text: str,
+    *,
+    stage: PipelineStage,
+    turn_index: int,
+) -> str:
+    reply = text.strip()
+    if stage != PipelineStage.ASSESSMENT or turn_index != 1:
+        return reply
+
+    normalized = " ".join(reply.lower().split())
+    has_ai_disclosure = "ai agent" in normalized and "company" in normalized
+    has_recording_disclosure = "logged and recorded" in normalized or (
+        "logged" in normalized and "recorded" in normalized
+    )
+    if has_ai_disclosure and has_recording_disclosure:
+        return reply
+
+    return f"{_ASSESSMENT_OPENING_DISCLOSURE} {reply}".strip()
 
 
 def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
@@ -548,6 +574,11 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
         system_prompt=system_prompt,
         user_prompt=user_prompt,
     )
+    assistant_reply = _prepend_assessment_opening_disclosure(
+        llm_result.text,
+        stage=turn_input.stage,
+        turn_index=turn_input.turn_index,
+    )
 
     budget_metadata = report.to_metadata()
     logger.info(
@@ -558,8 +589,8 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
     turn_output = StageTurnOutput(
         stage=turn_input.stage,
         channel=channel,
-        assistant_reply=llm_result.text,
-        summary=_trim_summary(llm_result.text),
+        assistant_reply=assistant_reply,
+        summary=_trim_summary(assistant_reply),
         decision=decision,
         stage_complete=stage_complete,
         collected_fields=updated_fields,
