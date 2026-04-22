@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 import logging
-from functools import lru_cache
 from pathlib import Path
 import re
 from typing import Any
@@ -18,6 +17,9 @@ from app.models.pipeline import (
     ComplianceFlags,
     ConversationMessage,
     PipelineStage,
+    ResolutionVoiceCallCreateInput,
+    ResolutionVoiceCallCreateOutput,
+    ResolutionVoiceFinalizeInput,
     StageTurnInput,
     StageTurnOutput,
 )
@@ -45,6 +47,7 @@ from app.services.compliance_vector_store import (
     vector_hits_to_metadata,
 )
 from app.services.handoff import build_handoff_summary
+from app.services.prompt_loader import load_stage_prompt
 from app.services.summarization import (
     build_overflow_prompt,
     get_policy_for_stage,
@@ -58,6 +61,7 @@ from app.services.token_budget import (
     is_borrower_message_oversized,
     truncate_to_budget,
 )
+from app.services.vapi_client import create_resolution_web_call
 
 
 _cached_client: AnthropicClient | None = None
@@ -317,19 +321,91 @@ def _evaluate_stage_turn(
     )
 
 
-_PROMPT_FILES = {
-    PipelineStage.ASSESSMENT: "assessment.txt",
-    PipelineStage.RESOLUTION: "resolution.txt",
-    PipelineStage.FINAL_NOTICE: "final_notice.txt",
-}
+def _message_content_to_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item.strip())
+                continue
+            if isinstance(item, dict):
+                text = item.get("text") or item.get("content")
+                if isinstance(text, str):
+                    parts.append(text.strip())
+        return " ".join(part for part in parts if part).strip()
+    if isinstance(content, dict):
+        text = content.get("text") or content.get("content")
+        if isinstance(text, str):
+            return text.strip()
+    return ""
 
 
-@lru_cache(maxsize=3)
+def _normalize_voice_role(role: Any) -> str | None:
+    if not isinstance(role, str):
+        return None
+    lowered = role.strip().lower()
+    if lowered in {"user", "customer", "caller", "borrower"}:
+        return "borrower"
+    if lowered in {"assistant", "agent", "ai"}:
+        return "assistant"
+    return None
+
+
+def _extract_voice_messages(
+    *,
+    artifact: dict[str, Any],
+    event_messages: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    candidates: list[dict[str, Any]] = []
+    candidates.extend(event_messages)
+
+    artifact_messages = artifact.get("messages")
+    if isinstance(artifact_messages, list):
+        candidates.extend(item for item in artifact_messages if isinstance(item, dict))
+
+    formatted_messages = artifact.get("messagesOpenAIFormatted")
+    if isinstance(formatted_messages, list):
+        candidates.extend(item for item in formatted_messages if isinstance(item, dict))
+
+    transcript_messages = artifact.get("transcript")
+    if isinstance(transcript_messages, list):
+        candidates.extend(item for item in transcript_messages if isinstance(item, dict))
+    elif isinstance(transcript_messages, str) and transcript_messages.strip():
+        candidates.append({"role": "customer", "content": transcript_messages})
+
+    normalized: list[dict[str, str]] = []
+    for item in candidates:
+        role = _normalize_voice_role(item.get("role") or item.get("speaker"))
+        if not role:
+            continue
+        text = _message_content_to_text(
+            item.get("content") or item.get("text") or item.get("transcript")
+        )
+        if not text:
+            continue
+        normalized.append({"role": role, "text": text})
+    return normalized
+
+
+def _summarize_voice_messages(
+    messages: list[dict[str, str]],
+) -> tuple[str, str, str]:
+    borrower_lines = [item["text"] for item in messages if item["role"] == "borrower"]
+    assistant_lines = [item["text"] for item in messages if item["role"] == "assistant"]
+
+    borrower_text = " ".join(borrower_lines).strip()
+    assistant_text = " ".join(assistant_lines).strip()
+
+    excerpt_lines = [f"{item['role']}: {item['text']}" for item in messages[:8]]
+    transcript_excerpt = "\n".join(excerpt_lines).strip()
+    return borrower_text, assistant_text, transcript_excerpt
+
+
 def _load_prompt(stage: PipelineStage) -> str:
-    """Load system prompt text from ``app/prompts/<stage>.txt``."""
-    filename = _PROMPT_FILES[stage]
-    path = Path(__file__).resolve().parent.parent / "prompts" / filename
-    return path.read_text(encoding="utf-8").strip()
+    """Backward-compatible wrapper around shared prompt loader."""
+    return load_stage_prompt(stage)
 
 
 def _stage_defaults(
@@ -794,6 +870,149 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
         decision, llm_result.model,
     )
     return turn_output.model_dump(mode="json")
+
+
+async def _finalize_resolution_voice_call(payload: dict[str, Any]) -> dict[str, Any]:
+    final_input = ResolutionVoiceFinalizeInput.model_validate(payload)
+
+    flags = ComplianceFlags(**final_input.compliance_flags.model_dump(mode="json"))
+    voice_messages = _extract_voice_messages(
+        artifact=final_input.artifact,
+        event_messages=final_input.messages,
+    )
+    borrower_text_raw, assistant_text_raw, transcript_excerpt = _summarize_voice_messages(
+        voice_messages
+    )
+
+    borrower_text, borrower_pii_redacted = redact_pii(borrower_text_raw)
+    assistant_text, assistant_pii_redacted = redact_pii(assistant_text_raw)
+
+    if detect_stop_contact(borrower_text):
+        flags.stop_contact_requested = True
+    if detect_abusive(borrower_text):
+        flags.abusive_borrower = True
+    if detect_hardship(borrower_text):
+        flags.hardship_detected = True
+
+    if flags.stop_contact_requested:
+        return StageTurnOutput(
+            stage=PipelineStage.RESOLUTION,
+            channel=AgentChannel.VOICE_WEB,
+            assistant_reply=STOP_CONTACT_REPLY,
+            summary=STOP_CONTACT_REPLY,
+            decision="stop_contact_requested",
+            stage_complete=True,
+            collected_fields=final_input.collected_fields,
+            transition_reason="borrower_requested_stop_contact",
+            next_stage=None,
+            compliance_flags=flags,
+            metadata={
+                "model": "vapi",
+                "used_fallback": False,
+                "voice_call_id": final_input.call_id,
+                "voice_call_status": final_input.call_status,
+                "voice_ended_reason": final_input.ended_reason,
+                "voice_message_count": len(voice_messages),
+                "voice_transcript_excerpt": transcript_excerpt,
+            },
+        ).model_dump(mode="json")
+
+    if flags.abusive_borrower:
+        return StageTurnOutput(
+            stage=PipelineStage.RESOLUTION,
+            channel=AgentChannel.VOICE_WEB,
+            assistant_reply=ABUSIVE_CLOSE_REPLY,
+            summary=ABUSIVE_CLOSE_REPLY,
+            decision="abusive_borrower_close",
+            stage_complete=True,
+            collected_fields=final_input.collected_fields,
+            transition_reason="abusive_language_detected",
+            next_stage=None,
+            compliance_flags=flags,
+            metadata={
+                "model": "vapi",
+                "used_fallback": False,
+                "voice_call_id": final_input.call_id,
+                "voice_call_status": final_input.call_status,
+                "voice_ended_reason": final_input.ended_reason,
+                "voice_message_count": len(voice_messages),
+                "voice_transcript_excerpt": transcript_excerpt,
+            },
+        ).model_dump(mode="json")
+
+    evaluation_input = borrower_text or transcript_excerpt or "voice_call_completed"
+    updated_fields, stage_complete, transition_reason, decision = _resolution_logic(
+        borrower_message=evaluation_input,
+        collected_fields=final_input.collected_fields,
+        turn_index=max(3, final_input.turn_index),
+    )
+    if not stage_complete:
+        stage_complete = True
+    if transition_reason == "resolution_max_turns_reached":
+        transition_reason = "resolution_call_ended"
+    if decision == "resolution_follow_up":
+        decision = "resolution_attempted"
+
+    false_threats = check_false_threats(assistant_text)
+    offer_violations = check_offer_bounds(assistant_text)
+
+    assistant_reply = (
+        _message_content_to_text(final_input.artifact.get("summary"))
+        or assistant_text
+        or "Resolution voice call completed. Outcome recorded."
+    )
+
+    compliance_metadata: dict[str, Any] = {}
+    if borrower_pii_redacted:
+        compliance_metadata["compliance_input_pii_redacted"] = True
+    if assistant_pii_redacted:
+        compliance_metadata["compliance_output_pii_redacted"] = True
+    if false_threats:
+        compliance_metadata["compliance_false_threats"] = false_threats
+    if offer_violations:
+        compliance_metadata["compliance_offer_violations"] = offer_violations
+    if flags.hardship_detected:
+        compliance_metadata["compliance_hardship_detected"] = True
+
+    turn_output = StageTurnOutput(
+        stage=PipelineStage.RESOLUTION,
+        channel=AgentChannel.VOICE_WEB,
+        assistant_reply=assistant_reply,
+        summary=_trim_summary(assistant_reply),
+        decision=decision,
+        stage_complete=stage_complete,
+        collected_fields=updated_fields,
+        transition_reason=transition_reason,
+        next_stage=PipelineStage.FINAL_NOTICE if stage_complete else PipelineStage.RESOLUTION,
+        compliance_flags=flags,
+        metadata={
+            "model": "vapi",
+            "used_fallback": False,
+            "voice_call_id": final_input.call_id,
+            "voice_call_status": final_input.call_status,
+            "voice_ended_reason": final_input.ended_reason,
+            "voice_final_artifact_received": True,
+            "voice_message_count": len(voice_messages),
+            "voice_transcript_excerpt": transcript_excerpt,
+            **compliance_metadata,
+        },
+    )
+    return turn_output.model_dump(mode="json")
+
+
+@activity.defn(name="create_resolution_voice_call")
+async def create_resolution_voice_call(payload: dict[str, Any]) -> dict[str, Any]:
+    call_input = ResolutionVoiceCallCreateInput.model_validate(payload)
+    call_output = await create_resolution_web_call(call_input)
+    normalized = ResolutionVoiceCallCreateOutput.model_validate(
+        call_output.model_dump(mode="json"),
+    )
+    return normalized.model_dump(mode="json")
+
+
+@activity.defn(name="finalize_resolution_voice_call")
+async def finalize_resolution_voice_call(payload: dict[str, Any]) -> dict[str, Any]:
+    return await _finalize_resolution_voice_call(payload)
 
 
 @activity.defn(name="assessment_agent")

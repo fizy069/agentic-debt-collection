@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from dotenv import load_dotenv
@@ -19,6 +21,10 @@ from app.models.pipeline import (
     PipelineStartRequest,
     PipelineStartResponse,
     PipelineStatus,
+)
+from app.services.vapi_client import (
+    normalize_vapi_server_message,
+    resolve_resolution_voice_settings,
 )
 from app.workflows.borrower_workflow import BorrowerWorkflow
 
@@ -44,10 +50,15 @@ async def startup() -> None:
     temporal_server = os.getenv("TEMPORAL_SERVER_URL", "localhost:7233")
     temporal_namespace = os.getenv("TEMPORAL_NAMESPACE", "default")
     task_queue = os.getenv("TEMPORAL_TASK_QUEUE", "borrower-pipeline-task-queue")
+    voice_settings = resolve_resolution_voice_settings()
 
     logger.info(
-        "API startup  temporal=%s  namespace=%s  queue=%s",
-        temporal_server, temporal_namespace, task_queue,
+        "API startup  temporal=%s  namespace=%s  queue=%s  voice_mode=%s  fallback=%s",
+        temporal_server,
+        temporal_namespace,
+        task_queue,
+        voice_settings.mode.value,
+        voice_settings.fallback_reason,
     )
 
     app.state.temporal_client = await Client.connect(
@@ -78,6 +89,29 @@ def get_task_queue(request: Request) -> str:
     return task_queue
 
 
+def _validate_vapi_webhook_auth(headers: dict[str, str]) -> None:
+    expected_bearer = (os.getenv("VAPI_WEBHOOK_AUTH_BEARER") or "").strip()
+    expected_secret = (os.getenv("VAPI_WEBHOOK_SECRET") or "").strip()
+    if not expected_bearer and not expected_secret:
+        return
+
+    authorized = False
+    if expected_bearer:
+        actual_auth = (headers.get("authorization") or "").strip()
+        authorized = hmac.compare_digest(actual_auth, f"Bearer {expected_bearer}") or (
+            hmac.compare_digest(actual_auth, expected_bearer)
+        )
+    if expected_secret:
+        actual_secret = (headers.get("x-vapi-secret") or "").strip()
+        authorized = authorized or hmac.compare_digest(actual_secret, expected_secret)
+
+    if not authorized:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid webhook authentication credentials.",
+        )
+
+
 @app.get("/health")
 async def healthcheck() -> dict[str, str]:
     return {"status": "ok"}
@@ -94,13 +128,22 @@ async def start_pipeline(
     task_queue: str = Depends(get_task_queue),
 ) -> PipelineStartResponse:
     workflow_id = payload.workflow_id or f"pipeline-{payload.borrower.borrower_id}-{uuid4().hex[:8]}"
+    voice_settings = resolve_resolution_voice_settings()
 
-    logger.info("POST /pipelines  workflow_id=%s  borrower=%s", workflow_id, payload.borrower.borrower_id)
+    logger.info(
+        "POST /pipelines  workflow_id=%s  borrower=%s  voice_mode=%s",
+        workflow_id,
+        payload.borrower.borrower_id,
+        voice_settings.mode.value,
+    )
 
     try:
         handle = await client.start_workflow(
             BorrowerWorkflow.run,
-            {"borrower": payload.borrower.model_dump(mode="json")},
+            {
+                "borrower": payload.borrower.model_dump(mode="json"),
+                "voice_settings": voice_settings.model_dump(mode="json"),
+            },
             id=workflow_id,
             task_queue=task_queue,
             execution_timeout=timedelta(hours=24),
@@ -157,6 +200,63 @@ async def send_borrower_message(
         accepted=True,
         message_id=payload.message_id,
     )
+
+
+@app.post("/webhooks/vapi", status_code=status.HTTP_202_ACCEPTED)
+async def vapi_webhook(
+    request: Request,
+    client: Client = Depends(get_temporal_client),
+) -> dict[str, Any]:
+    _validate_vapi_webhook_auth(request.headers)
+
+    try:
+        payload = await request.json()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid JSON payload.",
+        ) from exc
+
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Webhook payload must be a JSON object.",
+        )
+
+    event = normalize_vapi_server_message(payload)
+    if not event.workflow_id:
+        logger.warning(
+            "Vapi webhook missing workflow metadata  type=%s  call_id=%s",
+            event.event_type,
+            event.call_id,
+        )
+        return {"accepted": True, "routed": False}
+
+    handle = client.get_workflow_handle(event.workflow_id)
+    try:
+        await handle.signal(
+            BorrowerWorkflow.update_resolution_voice_event,
+            event.model_dump(mode="json"),
+        )
+    except RPCError as exc:
+        if exc.status == RPCStatusCode.NOT_FOUND:
+            logger.warning(
+                "Vapi webhook target workflow not found  workflow_id=%s  call_id=%s",
+                event.workflow_id,
+                event.call_id,
+            )
+            return {"accepted": True, "routed": False}
+        logger.error(
+            "Failed to signal workflow from Vapi webhook  workflow_id=%s  error=%s",
+            event.workflow_id,
+            exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to process webhook: {exc}",
+        ) from exc
+
+    return {"accepted": True, "routed": True}
 
 
 @app.get("/pipelines/{workflow_id}", response_model=PipelineStatus)

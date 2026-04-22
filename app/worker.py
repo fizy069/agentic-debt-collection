@@ -11,7 +11,9 @@ from temporalio.worker import Worker
 
 from app.activities.agents import (
     assessment_agent,
+    create_resolution_voice_call,
     final_notice_agent,
+    finalize_resolution_voice_call,
     resolution_agent,
 )
 from app.logging_config import setup_logging
@@ -41,7 +43,13 @@ async def run_worker() -> None:
         client,
         task_queue=task_queue,
         workflows=[BorrowerWorkflow],
-        activities=[assessment_agent, resolution_agent, final_notice_agent],
+        activities=[
+            assessment_agent,
+            resolution_agent,
+            final_notice_agent,
+            create_resolution_voice_call,
+            finalize_resolution_voice_call,
+        ],
     )
     logger.info("Worker connected and running")
     await worker.run()

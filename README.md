@@ -130,3 +130,54 @@ python .\scripts\test_step1_multiturn.py --base-url http://127.0.0.1:8000
 ```
 
 The script starts a workflow, sends staged borrower messages, waits for stage transitions, and validates end-to-end completion.
+
+## Resolution Voice Mode (Vapi)
+
+Agent 2 (`resolution`) now supports two modes controlled by env:
+
+- `AGENT2_VOICE_MODE=stub` (default): keeps the current text/stub Resolution path.
+- `AGENT2_VOICE_MODE=vapi`: creates a transient Vapi `webCall` at Resolution stage entry and waits for webhook completion before finalizing Resolution.
+
+Minimum env required for `vapi` mode:
+
+```powershell
+AGENT2_VOICE_MODE=vapi
+VAPI_API_KEY=...
+VAPI_WEBHOOK_BASE_URL=https://<public-base-url>
+```
+
+Optional env:
+
+- `VAPI_WEBHOOK_CREDENTIAL_ID` for dashboard-managed webhook credentials
+- `VAPI_MODEL_PROVIDER`, `VAPI_MODEL_NAME`, `VAPI_VOICE_PROVIDER`, `VAPI_VOICE_ID`, `VAPI_TRANSCRIBER_PROVIDER`
+- `VAPI_WEBHOOK_AUTH_BEARER` and/or `VAPI_WEBHOOK_SECRET` for local validation
+
+### Webhook endpoint
+
+Vapi server events are received at:
+
+```text
+POST /webhooks/vapi
+```
+
+The API extracts workflow routing metadata (`workflow_id`, `borrower_id`, `stage`) from webhook payload metadata and signals the matching Temporal workflow.
+
+### Local webhook routing notes
+
+For local testing, the API must be reachable from Vapi over a public URL. Use a tunnel (for example `ngrok`) and point `VAPI_WEBHOOK_BASE_URL` to that public base URL:
+
+```powershell
+ngrok http 8000
+```
+
+If you run the API on a different port (for example `4242`), tunnel that port instead.
+
+`vapi listen` is only a local forwarder. It does not replace the need for a publicly reachable URL for Vapi-originated webhooks in end-to-end testing.
+
+### Manual browser verification
+
+1. Open `http://127.0.0.1:8000/test`.
+2. Start a pipeline and progress through Assessment.
+3. At Resolution (in `vapi` mode), use the **Join Resolution Call** action when `webCallUrl` is present.
+4. End the voice call and confirm the pipeline advances after webhook completion.
+5. Continue Final Notice on the existing text path.

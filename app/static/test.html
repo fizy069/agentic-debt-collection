@@ -41,6 +41,27 @@
   #input-bar input { flex: 1; padding: 8px 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #f1f5f9; font-size: 0.85rem; }
   #input-bar input:focus { outline: none; border-color: #3b82f6; }
 
+  /* voice panel */
+  #voice-panel {
+    display: none;
+    margin: 0 1.5rem 0.75rem;
+    padding: 0.75rem;
+    border: 1px solid #1d4ed8;
+    border-radius: 8px;
+    background: #0b1a3d;
+    gap: 0.6rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  #voice-panel strong { color: #bfdbfe; font-size: 0.8rem; }
+  #voice-details { font-size: 0.75rem; color: #93c5fd; }
+  #voice-join { text-decoration: none; padding: 6px 10px; font-size: 0.75rem; }
+  #voice-join[aria-disabled="true"] {
+    background: #334155;
+    color: #94a3b8;
+    pointer-events: none;
+  }
+
   /* status bar */
   #status-bar { padding: 0.5rem 1.5rem; background: #1e293b; border-top: 1px solid #334155; font-size: 0.7rem; color: #64748b; display: flex; gap: 1rem; }
 </style>
@@ -80,9 +101,14 @@
 
   <div id="chat-area">
     <div id="messages"></div>
+    <div id="voice-panel">
+      <strong>Resolution voice call</strong>
+      <a id="voice-join" class="btn-primary" target="_blank" rel="noopener noreferrer" aria-disabled="true">Join Resolution Call</a>
+      <span id="voice-details">Waiting for call details...</span>
+    </div>
     <div id="input-bar">
       <input id="chat-input" placeholder="Type a message as the borrower..." onkeydown="if(event.key==='Enter')sendMessage()">
-      <button class="btn-primary" onclick="sendMessage()">Send</button>
+      <button id="btn-send" class="btn-primary" onclick="sendMessage()">Send</button>
     </div>
     <div id="status-bar">
       <span>Workflow: <strong id="sb-wf">-</strong></span>
@@ -97,6 +123,8 @@ const API = '';
 let workflowId = null;
 let seenMessageCount = 0;
 let pollTimer = null;
+let lastVoiceCallStatus = null;
+let lastVoiceCallId = null;
 
 async function startPipeline() {
   const btn = document.getElementById('btn-start');
@@ -134,6 +162,9 @@ async function startPipeline() {
     addBorrowerMsg(body.borrower.borrower_message);
 
     seenMessageCount = 0;
+    lastVoiceCallStatus = null;
+    lastVoiceCallId = null;
+    setComposerEnabled(true);
     startPolling();
   } catch (e) {
     addSystemMsg('ERROR: ' + e.message);
@@ -190,13 +221,62 @@ async function pollStatus() {
       seenMessageCount++;
     }
 
+    renderVoicePanel(data);
+
     if (data.completed || data.failed) {
       stopPolling();
       const label = data.completed ? 'Pipeline completed' : 'Pipeline failed';
       addSystemMsg(label + (data.final_outcome ? ' (' + data.final_outcome + ')' : '') + (data.error ? ': ' + data.error : ''));
-      document.getElementById('chat-input').disabled = true;
+      setComposerEnabled(false);
     }
   } catch (_) { /* ignore transient poll errors */ }
+}
+
+function setComposerEnabled(enabled) {
+  document.getElementById('chat-input').disabled = !enabled;
+  document.getElementById('btn-send').disabled = !enabled;
+}
+
+function renderVoicePanel(data) {
+  const panel = document.getElementById('voice-panel');
+  const joinLink = document.getElementById('voice-join');
+  const details = document.getElementById('voice-details');
+  const session = data.resolution_voice_session;
+  const isResolution = data.current_stage === 'resolution';
+  const isVoiceMode = Boolean(session && session.mode === 'vapi');
+
+  if (!isResolution || !isVoiceMode) {
+    panel.style.display = 'none';
+    if (!data.completed && !data.failed) setComposerEnabled(true);
+    return;
+  }
+
+  panel.style.display = 'flex';
+  const statusText = session.callStatus || 'queued';
+  const endedReason = session.endedReason ? ' · Ended: ' + session.endedReason : '';
+  details.textContent = 'Call: ' + (session.callId || 'pending') + ' · Status: ' + statusText + endedReason;
+
+  if (session.webCallUrl) {
+    joinLink.href = session.webCallUrl;
+    joinLink.setAttribute('aria-disabled', 'false');
+  } else {
+    joinLink.removeAttribute('href');
+    joinLink.setAttribute('aria-disabled', 'true');
+  }
+
+  const callActive = !session.finalArtifactReceived;
+  if (!data.completed && !data.failed) {
+    setComposerEnabled(!callActive);
+  }
+
+  if (statusText !== lastVoiceCallStatus || session.callId !== lastVoiceCallId) {
+    addSystemMsg(
+      'Resolution voice status: ' + statusText +
+      (session.callId ? ' (call ' + session.callId + ')' : '')
+    );
+    lastVoiceCallStatus = statusText;
+    lastVoiceCallId = session.callId || null;
+  }
 }
 
 function startPolling() {

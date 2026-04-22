@@ -18,6 +18,16 @@ class PipelineStage(str, Enum):
 class AgentChannel(str, Enum):
     CHAT = "chat"
     VOICE_STUB = "voice_stub_chat"
+    VOICE_WEB = "voice_web_call"
+
+
+class VoiceMode(str, Enum):
+    STUB = "stub"
+    VAPI = "vapi"
+
+
+class VoiceProvider(str, Enum):
+    VAPI = "vapi"
 
 
 class ConversationRole(str, Enum):
@@ -84,6 +94,30 @@ class ComplianceFlags(BaseModel):
         return self.stop_contact_requested or self.abusive_borrower
 
 
+class ResolutionVoiceSettings(BaseModel):
+    mode: VoiceMode = VoiceMode.STUB
+    provider: VoiceProvider | None = None
+    webhook_base_url: str | None = None
+    webhook_credential_id: str | None = None
+    model_provider: str | None = None
+    model_name: str | None = None
+    voice_provider: str | None = None
+    voice_id: str | None = None
+    transcriber_provider: str | None = None
+    fallback_reason: str | None = None
+
+
+class ResolutionVoiceSession(BaseModel):
+    mode: VoiceMode = VoiceMode.STUB
+    provider: VoiceProvider | None = None
+    callId: str | None = None
+    webCallUrl: str | None = None
+    callStatus: str | None = None
+    endedReason: str | None = None
+    finalArtifactReceived: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class StageTurnInput(BaseModel):
     borrower: BorrowerRequest
     stage: PipelineStage
@@ -112,6 +146,53 @@ class StageTurnOutput(BaseModel):
     compliance_flags: ComplianceFlags = Field(default_factory=ComplianceFlags)
 
 
+class ResolutionVoiceCallCreateInput(BaseModel):
+    workflow_id: str = Field(min_length=3, max_length=128)
+    borrower: BorrowerRequest
+    stage: PipelineStage = PipelineStage.RESOLUTION
+    transcript: list[ConversationMessage] = Field(default_factory=list)
+    completed_stages: list[dict[str, Any]] = Field(default_factory=list)
+    voice_settings: ResolutionVoiceSettings = Field(default_factory=ResolutionVoiceSettings)
+
+
+class ResolutionVoiceCallCreateOutput(BaseModel):
+    provider: VoiceProvider = VoiceProvider.VAPI
+    call_id: str
+    web_call_url: str | None = None
+    status: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ResolutionVoiceEvent(BaseModel):
+    event_type: str = Field(min_length=1, max_length=64)
+    workflow_id: str | None = None
+    borrower_id: str | None = None
+    stage: PipelineStage = PipelineStage.RESOLUTION
+    provider: VoiceProvider = VoiceProvider.VAPI
+    call_id: str | None = None
+    call_status: str | None = None
+    ended_reason: str | None = None
+    final_artifact_received: bool = False
+    artifact: dict[str, Any] = Field(default_factory=dict)
+    messages: list[dict[str, Any]] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ResolutionVoiceFinalizeInput(BaseModel):
+    borrower: BorrowerRequest
+    transcript: list[ConversationMessage] = Field(default_factory=list)
+    completed_stages: list[dict[str, Any]] = Field(default_factory=list)
+    collected_fields: dict[str, bool] = Field(default_factory=dict)
+    turn_index: int = Field(default=1, ge=1)
+    compliance_flags: ComplianceFlags = Field(default_factory=ComplianceFlags)
+    call_id: str | None = None
+    call_status: str | None = None
+    ended_reason: str | None = None
+    artifact: dict[str, Any] = Field(default_factory=dict)
+    messages: list[dict[str, Any]] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class BorrowerMessageRequest(BaseModel):
     message: str = Field(min_length=1, max_length=12000)
     message_id: str | None = Field(
@@ -132,6 +213,8 @@ class PipelineStatus(BaseModel):
     current_stage: PipelineStage
     completed: bool = False
     failed: bool = False
+    voice_mode: VoiceMode = VoiceMode.STUB
+    resolution_voice_session: ResolutionVoiceSession | None = None
     outputs: list[AgentStageOutput] = Field(default_factory=list)
     transcript: list[ConversationMessage] = Field(default_factory=list)
     pending_messages: int = 0
