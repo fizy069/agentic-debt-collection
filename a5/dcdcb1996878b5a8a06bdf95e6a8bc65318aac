@@ -1,0 +1,43 @@
+.gitignore
+  h_7f63ecbcbb8eec 44-46
+app/services/compliance_judge.py
+  3609448156e5b184 1-215
+tests/test_compliance_judge.py
+  3609448156e5b184 1-479
+.env.example
+  3609448156e5b184 10-16
+pyproject.toml
+  3609448156e5b184 14
+app/services/compliance_vector_store.py
+  3609448156e5b184 1-200
+tests/manual_vector_test.py
+  3609448156e5b184 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "a5dcdcb1996878b5a8a06bdf95e6a8bc65318aac",
+  "prompts": {
+    "3609448156e5b184": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e6eb2259-1a2c-4533-9c1f-762d65a3fdd3",
+        "model": "claude-4.6-opus-max"
+      },
+      "human_author": "fizy069",
+      "messages": [],
+      "total_additions": 1044,
+      "total_deletions": 1,
+      "accepted_lines": 935,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_55bf61dfd6cf88": {
+      "author": "Mahir Ghadiali (mghadial)"
+    },
+    "h_7f63ecbcbb8eec": {
+      "author": "fizy069"
+    }
+  }
+}
