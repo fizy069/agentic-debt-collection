@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import base64
 import logging
 import os
 from datetime import timedelta
@@ -7,8 +9,9 @@ from pathlib import Path
 from uuid import uuid4
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from temporalio.client import Client
 from temporalio.service import RPCError, RPCStatusCode
 
@@ -19,6 +22,13 @@ from app.models.pipeline import (
     PipelineStartRequest,
     PipelineStartResponse,
     PipelineStatus,
+)
+from app.services.voice_client import (
+    MAX_UPLOAD_BYTES,
+    VoiceClient,
+    VoiceServiceError,
+    _ALLOWED_AUDIO_MIMES,
+    is_voice_enabled,
 )
 from app.workflows.borrower_workflow import BorrowerWorkflow
 
@@ -32,6 +42,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Post default debt-collection", version="0.1.0")
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
+app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
 
 @app.get("/test")
@@ -180,3 +191,212 @@ async def get_pipeline_status(
         ) from exc
 
     return PipelineStatus.model_validate(status_payload)
+
+
+# ---------------------------------------------------------------------------
+# Voice layer (Resolution stage only, env-toggled)
+# ---------------------------------------------------------------------------
+
+@app.get("/config")
+async def get_config() -> dict[str, object]:
+    return {
+        "agent2_voice_enabled": is_voice_enabled(),
+        "voice_stage": "resolution",
+    }
+
+
+_VOICE_POLL_INTERVAL_S = 0.25
+_VOICE_POLL_TIMEOUT_S = 60.0
+
+
+@app.post("/pipelines/{workflow_id}/voice-turn")
+async def voice_turn(
+    workflow_id: str,
+    audio: UploadFile,
+    client: Client = Depends(get_temporal_client),
+) -> dict[str, object]:
+    if not is_voice_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Voice mode is not enabled. Set AGENT2_VOICE_ENABLED=true.",
+        )
+
+    content_type = (audio.content_type or "").split(";")[0].strip().lower()
+    if content_type not in _ALLOWED_AUDIO_MIMES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported audio type '{audio.content_type}'. Allowed: {sorted(_ALLOWED_AUDIO_MIMES)}",
+        )
+
+    audio_bytes = await audio.read()
+    if not audio_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Empty audio file.",
+        )
+    if len(audio_bytes) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Audio file too large ({len(audio_bytes)} bytes). Max {MAX_UPLOAD_BYTES}.",
+        )
+
+    handle = client.get_workflow_handle(workflow_id)
+
+    try:
+        current_status = await handle.query(BorrowerWorkflow.get_status)
+    except RPCError as exc:
+        if exc.status == RPCStatusCode.NOT_FOUND:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Workflow '{workflow_id}' not found.",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to query workflow: {exc}",
+        ) from exc
+
+    if current_status.get("current_stage") != "resolution":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Voice turns are only accepted during the resolution stage. Current stage: {current_status.get('current_stage')}",
+        )
+
+    pre_transcript_len = len(current_status.get("transcript", []))
+
+    try:
+        vc = VoiceClient()
+    except VoiceServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Voice service initialization failed: {exc.detail}",
+        ) from exc
+
+    safe_filename = f"voice-{uuid4().hex[:8]}.webm"
+    try:
+        borrower_text = await vc.transcribe(audio_bytes, safe_filename)
+    except VoiceServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"STT failed: {exc.detail}",
+        ) from exc
+
+    if not borrower_text.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Could not transcribe any speech from the audio.",
+        )
+
+    logger.info(
+        "voice_turn  workflow_id=%s  stt_text_len=%d",
+        workflow_id, len(borrower_text),
+    )
+
+    message_id = f"voice-{uuid4().hex[:8]}"
+    try:
+        await handle.signal(
+            BorrowerWorkflow.add_borrower_message,
+            {"message": borrower_text, "message_id": message_id},
+        )
+    except RPCError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to signal workflow: {exc}",
+        ) from exc
+
+    assistant_reply = None
+    poll_status = None
+    elapsed = 0.0
+    while elapsed < _VOICE_POLL_TIMEOUT_S:
+        await asyncio.sleep(_VOICE_POLL_INTERVAL_S)
+        elapsed += _VOICE_POLL_INTERVAL_S
+        try:
+            poll_status = await handle.query(BorrowerWorkflow.get_status)
+        except RPCError:
+            continue
+
+        transcript = poll_status.get("transcript", [])
+        if len(transcript) >= pre_transcript_len + 2:
+            last_msg = transcript[-1]
+            if last_msg.get("role") == "agent":
+                assistant_reply = last_msg.get("text", "")
+                break
+
+    if assistant_reply is None:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Timed out waiting for the agent to respond.",
+        )
+
+    try:
+        tts_bytes, tts_mime = await vc.synthesize(assistant_reply)
+    except VoiceServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"TTS failed: {exc.detail}",
+        ) from exc
+
+    audio_b64 = base64.b64encode(tts_bytes).decode("ascii")
+
+    return {
+        "transcribed_text": borrower_text,
+        "assistant_reply": assistant_reply,
+        "audio_base64": audio_b64,
+        "audio_mime": tts_mime,
+        "current_stage": poll_status.get("current_stage", "resolution") if poll_status else "resolution",
+        "stage_complete": poll_status.get("completed", False) if poll_status else False,
+    }
+
+
+@app.get("/voice-greeting")
+async def voice_greeting(
+    workflow_id: str = Query(...),
+    client: Client = Depends(get_temporal_client),
+) -> dict[str, object]:
+    """TTS the first resolution-stage agent reply so the call opens with a spoken greeting."""
+    if not is_voice_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Voice mode is not enabled.",
+        )
+
+    handle = client.get_workflow_handle(workflow_id)
+    try:
+        wf_status = await handle.query(BorrowerWorkflow.get_status)
+    except RPCError as exc:
+        if exc.status == RPCStatusCode.NOT_FOUND:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Workflow '{workflow_id}' not found.",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to query workflow: {exc}",
+        ) from exc
+
+    transcript = wf_status.get("transcript", [])
+    greeting_text = None
+    for msg in reversed(transcript):
+        if msg.get("role") == "agent" and msg.get("stage") == "resolution":
+            greeting_text = msg.get("text", "")
+            break
+
+    if not greeting_text:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No resolution agent reply found in transcript yet.",
+        )
+
+    try:
+        vc = VoiceClient()
+        audio_bytes, mime = await vc.synthesize(greeting_text)
+    except VoiceServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Greeting TTS failed: {exc.detail}",
+        ) from exc
+
+    return {
+        "assistant_reply": greeting_text,
+        "audio_base64": base64.b64encode(audio_bytes).decode("ascii"),
+        "audio_mime": mime,
+    }

@@ -15,6 +15,7 @@ dependencies = [
   "fastapi>=0.115.12",
   "pydantic>=2.11.3",
   "python-dotenv>=1.1.0",
+  "python-multipart>=0.0.18",
   "temporalio>=1.11.1",
   "tiktoken>=0.9.0",
   "uvicorn[standard]>=0.34.2",

@@ -130,3 +130,40 @@ python .\scripts\test_step1_multiturn.py --base-url http://127.0.0.1:8000
 ```
 
 The script starts a workflow, sends staged borrower messages, waits for stage transitions, and validates end-to-end completion.
+
+### 8) Agent 2 voice layer (optional)
+
+The Resolution stage can use voice instead of text. The borrower speaks into the
+browser microphone, audio is transcribed via OpenAI STT, the existing workflow
+processes the turn as usual, and the agent reply is spoken back via OpenAI TTS.
+
+Enable it by setting these in `.env`:
+
+```
+OPENAI_API_KEY=sk-...
+AGENT2_VOICE_ENABLED=true
+```
+
+Optional tuning (defaults shown):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENAI_STT_MODEL` | `gpt-4o-mini-transcribe` | OpenAI transcription model |
+| `OPENAI_TTS_MODEL` | `gpt-4o-mini-tts` | OpenAI text-to-speech model |
+| `OPENAI_TTS_VOICE` | `alloy` | TTS voice (`alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer`) |
+
+Voice is independent of the LLM provider: agents can use Anthropic while STT/TTS
+use OpenAI.
+
+With voice enabled, open `http://127.0.0.1:8000/test` and progress through
+Assessment by typing. When Resolution starts, an "Incoming Resolution Call" card
+appears. Click **Accept** to switch to the voice call panel. The agent speaks a
+greeting, then the microphone activates with automatic voice activity detection
+(VAD) — no click-to-talk needed. When you stop speaking, a filler phrase plays
+immediately while the system processes your message (STT → agent → TTS). The
+agent's reply then plays automatically and the mic reopens. Click **Decline** to
+stay in text mode. The call automatically ends when Resolution completes and the
+pipeline returns to text for Final Notice.
+
+Note: browser microphone access requires a secure context. `localhost` and
+`127.0.0.1` work for local development; production deployments need HTTPS.
