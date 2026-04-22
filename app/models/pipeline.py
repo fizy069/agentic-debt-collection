@@ -73,6 +73,17 @@ class ConversationMessage(BaseModel):
     message_id: str | None = None
 
 
+class ComplianceFlags(BaseModel):
+    """Structured compliance state tracked across the entire pipeline."""
+
+    stop_contact_requested: bool = False
+    hardship_detected: bool = False
+    abusive_borrower: bool = False
+
+    def any_terminal(self) -> bool:
+        return self.stop_contact_requested or self.abusive_borrower
+
+
 class StageTurnInput(BaseModel):
     borrower: BorrowerRequest
     stage: PipelineStage
@@ -84,6 +95,7 @@ class StageTurnInput(BaseModel):
         default_factory=list,
         description="Metadata from prior completed stages for handoff summary building.",
     )
+    compliance_flags: ComplianceFlags = Field(default_factory=ComplianceFlags)
 
 
 class StageTurnOutput(BaseModel):
@@ -97,6 +109,7 @@ class StageTurnOutput(BaseModel):
     transition_reason: str
     next_stage: PipelineStage | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    compliance_flags: ComplianceFlags = Field(default_factory=ComplianceFlags)
 
 
 class BorrowerMessageRequest(BaseModel):
@@ -125,6 +138,7 @@ class PipelineStatus(BaseModel):
     latest_assistant_reply: str | None = None
     stage_turn_counts: dict[str, int] = Field(default_factory=dict)
     stage_collected_fields: dict[str, dict[str, bool]] = Field(default_factory=dict)
+    compliance_flags: ComplianceFlags = Field(default_factory=ComplianceFlags)
     final_outcome: str | None = None
     error: str | None = None
 

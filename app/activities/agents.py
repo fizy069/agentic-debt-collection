@@ -15,12 +15,25 @@ logger = logging.getLogger(__name__)
 from app.models.pipeline import (
     AgentChannel,
     BorrowerRequest,
+    ComplianceFlags,
     ConversationMessage,
     PipelineStage,
     StageTurnInput,
     StageTurnOutput,
 )
 from app.services.anthropic_client import AnthropicClient
+from app.services.compliance import (
+    ABUSIVE_CLOSE_REPLY,
+    STOP_CONTACT_REPLY,
+    allowed_consequences_directive,
+    check_false_threats,
+    check_offer_bounds,
+    detect_abusive,
+    detect_hardship,
+    detect_stop_contact,
+    offer_policy_directive,
+    redact_pii,
+)
 from app.services.handoff import build_handoff_summary
 from app.services.summarization import (
     build_overflow_prompt,
@@ -448,11 +461,79 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
             },
         ).model_dump(mode="json")
 
+    # --- Compliance pre-checks on borrower input ---
+    flags = ComplianceFlags(**turn_input.compliance_flags.model_dump())
+    channel, next_stage, _ = _stage_defaults(turn_input.stage)
+
+    borrower_message, pii_redacted = redact_pii(turn_input.borrower_message)
+    if pii_redacted:
+        logger.info(
+            "compliance_pii_redacted  stage=%s  turn=%d",
+            turn_input.stage.value, turn_input.turn_index,
+        )
+
+    if detect_stop_contact(borrower_message):
+        flags.stop_contact_requested = True
+        logger.info(
+            "compliance_stop_contact  stage=%s  turn=%d",
+            turn_input.stage.value, turn_input.turn_index,
+        )
+        return StageTurnOutput(
+            stage=turn_input.stage,
+            channel=channel,
+            assistant_reply=STOP_CONTACT_REPLY,
+            summary=STOP_CONTACT_REPLY,
+            decision="stop_contact_requested",
+            stage_complete=True,
+            collected_fields=turn_input.collected_fields,
+            transition_reason="borrower_requested_stop_contact",
+            next_stage=None,
+            compliance_flags=flags,
+            metadata={
+                "model": "none",
+                "used_fallback": False,
+                "turn_index": turn_input.turn_index,
+                "compliance_stop_contact": True,
+            },
+        ).model_dump(mode="json")
+
+    if detect_abusive(borrower_message):
+        flags.abusive_borrower = True
+        logger.info(
+            "compliance_abusive_borrower  stage=%s  turn=%d",
+            turn_input.stage.value, turn_input.turn_index,
+        )
+        return StageTurnOutput(
+            stage=turn_input.stage,
+            channel=channel,
+            assistant_reply=ABUSIVE_CLOSE_REPLY,
+            summary=ABUSIVE_CLOSE_REPLY,
+            decision="abusive_borrower_close",
+            stage_complete=True,
+            collected_fields=turn_input.collected_fields,
+            transition_reason="abusive_language_detected",
+            next_stage=None,
+            compliance_flags=flags,
+            metadata={
+                "model": "none",
+                "used_fallback": False,
+                "turn_index": turn_input.turn_index,
+                "compliance_abusive_close": True,
+            },
+        ).model_dump(mode="json")
+
+    if detect_hardship(borrower_message):
+        flags.hardship_detected = True
+        logger.info(
+            "compliance_hardship_detected  stage=%s  turn=%d",
+            turn_input.stage.value, turn_input.turn_index,
+        )
+
     channel, next_stage, system_prompt = _stage_defaults(turn_input.stage)
 
     updated_fields, stage_complete, transition_reason, decision = _evaluate_stage_turn(
         stage=turn_input.stage,
-        borrower_message=turn_input.borrower_message,
+        borrower_message=borrower_message,
         collected_fields=turn_input.collected_fields,
         turn_index=turn_input.turn_index,
     )
@@ -471,12 +552,17 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
     turn_meta_lines = [
         f"Current stage: {turn_input.stage.value}",
         f"Turn index in stage: {turn_input.turn_index}",
-        f"Borrower message: {turn_input.borrower_message}",
+        f"Borrower message: {borrower_message}",
         f"Collected fields: {updated_fields}",
         f"Missing fields: {missing_fields if missing_fields else 'none'}",
         f"Transition reason: {transition_reason}",
         f"Stage complete this turn: {stage_complete}",
     ]
+    if flags.hardship_detected:
+        turn_meta_lines.append(
+            "COMPLIANCE: Hardship detected — offer hardship referral route. "
+            "Do not pressure the borrower."
+        )
     if final_notice_expiry:
         turn_meta_lines.append(f"Hard expiry date: {final_notice_expiry}")
     turn_meta_section = "\n".join(turn_meta_lines)
@@ -489,6 +575,9 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
         stage_complete=stage_complete,
         final_notice_expiry=final_notice_expiry,
     )
+    if turn_input.stage in (PipelineStage.RESOLUTION, PipelineStage.FINAL_NOTICE):
+        directives_section += f" {offer_policy_directive()}"
+        directives_section += f" {allowed_consequences_directive()}"
 
     handoff_section = ""
     if turn_input.completed_stages:
@@ -580,6 +669,38 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
         turn_index=turn_input.turn_index,
     )
 
+    # --- Compliance post-checks on assistant output ---
+    assistant_reply, output_pii_redacted = redact_pii(assistant_reply)
+    if output_pii_redacted:
+        logger.warning(
+            "compliance_output_pii_redacted  stage=%s  turn=%d",
+            turn_input.stage.value, turn_input.turn_index,
+        )
+
+    false_threats = check_false_threats(assistant_reply)
+    if false_threats:
+        logger.warning(
+            "compliance_false_threats_detected  stage=%s  turn=%d  threats=%s",
+            turn_input.stage.value, turn_input.turn_index, false_threats,
+        )
+
+    offer_violations = check_offer_bounds(assistant_reply)
+    if offer_violations:
+        logger.warning(
+            "compliance_offer_violations  stage=%s  turn=%d  violations=%s",
+            turn_input.stage.value, turn_input.turn_index, offer_violations,
+        )
+
+    compliance_metadata: dict[str, Any] = {}
+    if output_pii_redacted:
+        compliance_metadata["compliance_output_pii_redacted"] = True
+    if false_threats:
+        compliance_metadata["compliance_false_threats"] = false_threats
+    if offer_violations:
+        compliance_metadata["compliance_offer_violations"] = offer_violations
+    if flags.hardship_detected:
+        compliance_metadata["compliance_hardship_detected"] = True
+
     budget_metadata = report.to_metadata()
     logger.info(
         "stage_turn_budget  stage=%s  turn=%d  %s",
@@ -596,11 +717,13 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
         collected_fields=updated_fields,
         transition_reason=transition_reason,
         next_stage=next_stage if stage_complete else turn_input.stage,
+        compliance_flags=flags,
         metadata={
             "model": llm_result.model,
             "used_fallback": llm_result.used_fallback,
             "turn_index": turn_input.turn_index,
             **budget_metadata,
+            **compliance_metadata,
         },
     )
     logger.info(

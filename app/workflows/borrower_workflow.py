@@ -11,6 +11,7 @@ from app.models.pipeline import (
     AgentStageOutput,
     BorrowerMessageRequest,
     BorrowerRequest,
+    ComplianceFlags,
     ConversationMessage,
     ConversationRole,
     PipelineStage,
@@ -130,6 +131,7 @@ class BorrowerWorkflow:
             backoff_coefficient=2.0,
             maximum_attempts=3,
         )
+        compliance_flags = ComplianceFlags()
 
         try:
             for stage in stage_order:
@@ -167,6 +169,7 @@ class BorrowerWorkflow:
                         collected_fields=self._status["stage_collected_fields"][stage_key],
                         turn_index=turn_index,
                         completed_stages=self._completed_stages,
+                        compliance_flags=compliance_flags,
                     )
 
                     turn_output_payload = await workflow.execute_activity(
@@ -176,6 +179,12 @@ class BorrowerWorkflow:
                         retry_policy=retry_policy,
                     )
                     turn_output = StageTurnOutput.model_validate(turn_output_payload)
+
+                    compliance_flags = turn_output.compliance_flags
+
+                    self._status["compliance_flags"] = compliance_flags.model_dump(
+                        mode="json",
+                    )
 
                     if turn_output.metadata.get("borrower_message_oversized"):
                         self._status["transcript"][-1]["text"] = (
@@ -208,6 +217,22 @@ class BorrowerWorkflow:
                         stage=stage,
                         text=turn_output.assistant_reply,
                     )
+
+                    if compliance_flags.any_terminal():
+                        terminal_reason = (
+                            "stop_contact"
+                            if compliance_flags.stop_contact_requested
+                            else "abusive_close"
+                        )
+                        workflow.logger.info(
+                            "Pipeline terminated by compliance: %s at stage %s",
+                            terminal_reason, stage_key,
+                        )
+                        self._status["final_outcome"] = (
+                            f"compliance_{terminal_reason}"
+                        )
+                        self._set_stage(PipelineStage.COMPLETED, completed=True)
+                        return self._status
 
                     if turn_output.stage_complete:
                         workflow.logger.info(
