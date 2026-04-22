@@ -34,6 +34,16 @@ from app.services.compliance import (
     offer_policy_directive,
     redact_pii,
 )
+from app.services.compliance_judge import (
+    findings_to_metadata,
+    is_judge_enabled,
+    run_judge,
+)
+from app.services.compliance_vector_store import (
+    query_similar_violations,
+    upsert_violations,
+    vector_hits_to_metadata,
+)
 from app.services.handoff import build_handoff_summary
 from app.services.summarization import (
     build_overflow_prompt,
@@ -691,6 +701,56 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
             turn_input.stage.value, turn_input.turn_index, offer_violations,
         )
 
+    # --- Vector DB lookup (Layer 1 reads historical violations) ---
+    vector_meta: dict[str, Any] = {}
+    try:
+        vector_result = query_similar_violations(
+            assistant_reply,
+            stage=turn_input.stage.value,
+        )
+        vector_meta = vector_hits_to_metadata(vector_result)
+        if vector_result.records:
+            logger.info(
+                "vector_lookup_hits  stage=%s  turn=%d  count=%d",
+                turn_input.stage.value, turn_input.turn_index,
+                len(vector_result.records),
+            )
+    except Exception:
+        logger.exception(
+            "vector_lookup_error  stage=%s  turn=%d",
+            turn_input.stage.value, turn_input.turn_index,
+        )
+
+    # --- Layer 2 judge (audit-only) ---
+    judge_meta: dict[str, Any] = {}
+    if is_judge_enabled():
+        transcript_excerpt = _format_recent_transcript(
+            turn_input.transcript, max_items=4,
+        )
+        findings = await run_judge(
+            stage=turn_input.stage.value,
+            turn_index=turn_input.turn_index,
+            assistant_reply=assistant_reply,
+            transcript_excerpt=transcript_excerpt,
+        )
+        judge_meta = findings_to_metadata(findings)
+
+        if findings.violations:
+            upsert_violations(
+                workflow_id=turn_input.borrower.borrower_id,
+                stage=turn_input.stage.value,
+                turn_index=turn_input.turn_index,
+                violations=[
+                    {
+                        "rule": v.rule,
+                        "label": v.label,
+                        "confidence": v.confidence,
+                        "excerpt": v.excerpt,
+                    }
+                    for v in findings.violations
+                ],
+            )
+
     compliance_metadata: dict[str, Any] = {}
     if output_pii_redacted:
         compliance_metadata["compliance_output_pii_redacted"] = True
@@ -724,6 +784,8 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
             "turn_index": turn_input.turn_index,
             **budget_metadata,
             **compliance_metadata,
+            **vector_meta,
+            **judge_meta,
         },
     )
     logger.info(
