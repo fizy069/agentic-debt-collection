@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+import json
 import logging
-from functools import lru_cache
 from pathlib import Path
-import re
 from typing import Any
 
 from dotenv import load_dotenv
@@ -17,6 +16,7 @@ from app.models.pipeline import (
     BorrowerRequest,
     ComplianceFlags,
     ConversationMessage,
+    LLMStageResponse,
     PipelineStage,
     StageTurnInput,
     StageTurnOutput,
@@ -25,13 +25,11 @@ from app.services.anthropic_client import AnthropicClient
 from app.services.compliance import (
     ABUSIVE_CLOSE_REPLY,
     STOP_CONTACT_REPLY,
-    allowed_consequences_directive,
     check_false_threats,
     check_offer_bounds,
     detect_abusive,
     detect_hardship,
     detect_stop_contact,
-    offer_policy_directive,
     redact_pii,
 )
 from app.services.compliance_judge import (
@@ -45,6 +43,14 @@ from app.services.compliance_vector_store import (
     vector_hits_to_metadata,
 )
 from app.services.handoff import build_handoff_summary
+from app.services.prompt_assembler import (
+    _format_recent_transcript,
+    _render_compliance_directives,
+    _render_turn_directives,
+    assemble_agent_prompt,
+    assemble_overflow_user_prompt,
+)
+from app.services.prompt_registry import get_prompt_registry
 from app.services.summarization import (
     build_overflow_prompt,
     get_policy_for_stage,
@@ -111,14 +117,85 @@ def _prepend_assessment_opening_disclosure(
     return f"{_ASSESSMENT_OPENING_DISCLOSURE} {reply}".strip()
 
 
-def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
-    lowered = text.lower()
-    return any(keyword in lowered for keyword in keywords)
+_TURN_CAPS: dict[PipelineStage, int] = {
+    PipelineStage.ASSESSMENT: 5,
+    PipelineStage.RESOLUTION: 3,
+    PipelineStage.FINAL_NOTICE: 2,
+}
+
+_STAGE_FIELD_KEYS: dict[PipelineStage, list[str]] = {
+    PipelineStage.ASSESSMENT: [
+        "identity_confirmed",
+        "debt_acknowledged",
+        "financial_situation_gathered",
+    ],
+    PipelineStage.RESOLUTION: [
+        "options_reviewed",
+        "borrower_position_known",
+        "commitment_or_disposition",
+    ],
+    PipelineStage.FINAL_NOTICE: [
+        "final_notice_acknowledged",
+        "borrower_response_recorded",
+    ],
+}
 
 
-def _borrower_snapshot(borrower: BorrowerRequest) -> str:
+def _parse_stage_response(
+    raw: str,
+    *,
+    stage: PipelineStage,
+    collected_fields: dict[str, bool],
+) -> LLMStageResponse:
+    """Parse the LLM's structured JSON response with safe fallback.
+
+    On any parse failure, returns a safe default that keeps the stage open
+    and uses the raw text as the assistant reply.
+    """
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        first_newline = cleaned.index("\n") if "\n" in cleaned else 3
+        cleaned = cleaned[first_newline:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
+
+    try:
+        data = json.loads(cleaned)
+        return LLMStageResponse.model_validate(data)
+    except (json.JSONDecodeError, ValueError, Exception) as exc:
+        logger.warning(
+            "stage_response_parse_failed  stage=%s  error=%s  raw=%s",
+            stage.value, exc, raw[:300],
+        )
+        field_keys = _STAGE_FIELD_KEYS.get(stage, [])
+        fallback_fields = {k: collected_fields.get(k, False) for k in field_keys}
+        return LLMStageResponse(
+            assistant_reply=raw,
+            stage_complete=False,
+            collected_fields=fallback_fields,
+            transition_reason="llm_response_parse_failed",
+            decision=f"{stage.value}_follow_up",
+        )
+
+
+def _borrower_snapshot_for_overflow(
+    borrower: BorrowerRequest,
+    *,
+    identity_confirmed: bool = False,
+    stage: PipelineStage | None = None,
+) -> str:
+    """Rebuild borrower snapshot for overflow compression input."""
+    pre_verification = stage == PipelineStage.ASSESSMENT and not identity_confirmed
     masked_reference = borrower.account_reference[-4:]
+
+    if pre_verification:
+        header = "SYSTEM ACCOUNT RECORD (UNVERIFIED):"
+    else:
+        header = "VERIFIED BORROWER ACCOUNT:"
+
     return (
+        f"{header}\n"
         f"Borrower ID: {borrower.borrower_id}\n"
         f"Account Ref (last4): {masked_reference}\n"
         f"Debt: {borrower.debt_amount:.2f} {borrower.currency}\n"
@@ -128,219 +205,15 @@ def _borrower_snapshot(borrower: BorrowerRequest) -> str:
     )
 
 
-def _format_recent_transcript(
-    transcript: list[ConversationMessage],
-    max_items: int = 8,
-) -> str:
-    if not transcript:
-        return "No prior transcript."
-    recent = transcript[-max_items:]
-    lines = []
-    for item in recent:
-        stage = item.stage.value if item.stage else "none"
-        lines.append(f"{item.role.value}@{stage}: {item.text}")
-    return "\n".join(lines)
-
-
-def _assessment_logic(
-    *,
-    borrower_message: str,
-    collected_fields: dict[str, bool],
-    turn_index: int,
-) -> tuple[dict[str, bool], bool, str, str]:
-    updated = {
-        "identity_confirmed": bool(collected_fields.get("identity_confirmed")),
-        "debt_acknowledged": bool(collected_fields.get("debt_acknowledged")),
-        "ability_to_pay_discussed": bool(
-            collected_fields.get("ability_to_pay_discussed")
-        ),
-    }
-    lowered = borrower_message.lower()
-
-    identity_regex_hit = bool(re.search(r"\b\d{4}\b", lowered))
-    updated["identity_confirmed"] = updated["identity_confirmed"] or (
-        _contains_any(lowered, ("date of birth", "dob", "last four", "ssn", "identity"))
-        and identity_regex_hit
-    )
-    updated["debt_acknowledged"] = updated["debt_acknowledged"] or _contains_any(
-        lowered, ("debt", "balance", "owe", "i owe", "amount due", "yes")
-    )
-    updated["ability_to_pay_discussed"] = updated[
-        "ability_to_pay_discussed"
-    ] or _contains_any(
-        lowered, ("pay", "income", "salary", "monthly", "installment", "plan", "afford")
-    )
-
-    complete_by_fields = all(updated.values())
-    complete_by_turn_cap = turn_index >= 3
-    stage_complete = complete_by_fields or complete_by_turn_cap
-
-    transition_reason = (
-        "required_assessment_fields_collected"
-        if complete_by_fields
-        else "assessment_max_turns_reached"
-        if complete_by_turn_cap
-        else "awaiting_assessment_details"
-    )
-    decision = "assessment_completed" if stage_complete else "assessment_follow_up"
-    return updated, stage_complete, transition_reason, decision
-
-
-def _resolution_logic(
-    *,
-    borrower_message: str,
-    collected_fields: dict[str, bool],
-    turn_index: int,
-) -> tuple[dict[str, bool], bool, str, str]:
-    updated = {
-        "options_reviewed": bool(collected_fields.get("options_reviewed")),
-        "borrower_position_known": bool(collected_fields.get("borrower_position_known")),
-        "commitment_or_disposition": bool(
-            collected_fields.get("commitment_or_disposition")
-        ),
-    }
-    lowered = borrower_message.lower()
-
-    updated["options_reviewed"] = updated["options_reviewed"] or _contains_any(
-        lowered, ("option", "lump", "plan", "hardship", "discount")
-    )
-    updated["borrower_position_known"] = updated["borrower_position_known"] or _contains_any(
-        lowered,
-        (
-            "i choose",
-            "choose",
-            "prefer",
-            "agree",
-            "yes",
-            "no",
-            "cannot",
-            "can't",
-            "wont",
-            "won't",
-            "hardship",
-        ),
-    )
-    updated["commitment_or_disposition"] = updated[
-        "commitment_or_disposition"
-    ] or _contains_any(
-        lowered,
-        (
-            "agree",
-            "commit",
-            "i can pay",
-            "schedule",
-            "refuse",
-            "decline",
-            "hardship",
-        ),
-    )
-
-    complete_by_fields = all(updated.values())
-    complete_by_turn_cap = turn_index >= 3
-    stage_complete = complete_by_fields or complete_by_turn_cap
-
-    transition_reason = (
-        "resolution_terms_captured"
-        if complete_by_fields
-        else "resolution_max_turns_reached"
-        if complete_by_turn_cap
-        else "awaiting_resolution_position"
-    )
-    decision = "resolution_attempted" if stage_complete else "resolution_follow_up"
-    return updated, stage_complete, transition_reason, decision
-
-
-def _final_notice_logic(
-    *,
-    borrower_message: str,
-    collected_fields: dict[str, bool],
-    turn_index: int,
-) -> tuple[dict[str, bool], bool, str, str]:
-    updated = {
-        "final_notice_acknowledged": bool(
-            collected_fields.get("final_notice_acknowledged")
-        ),
-        "borrower_response_recorded": bool(
-            collected_fields.get("borrower_response_recorded")
-        ),
-    }
-    lowered = borrower_message.lower()
-
-    updated["final_notice_acknowledged"] = updated[
-        "final_notice_acknowledged"
-    ] or _contains_any(
-        lowered,
-        ("understand", "acknowledge", "received", "got it", "okay", "ok"),
-    )
-    updated["borrower_response_recorded"] = updated[
-        "borrower_response_recorded"
-    ] or len(lowered.strip()) > 0
-
-    complete_by_fields = all(updated.values())
-    complete_by_turn_cap = turn_index >= 2
-    stage_complete = complete_by_fields or complete_by_turn_cap
-
-    transition_reason = (
-        "final_notice_acknowledged"
-        if complete_by_fields
-        else "final_notice_max_turns_reached"
-        if complete_by_turn_cap
-        else "awaiting_final_notice_acknowledgement"
-    )
-    decision = "final_notice_sent" if stage_complete else "final_notice_follow_up"
-    return updated, stage_complete, transition_reason, decision
-
-
-def _evaluate_stage_turn(
-    *,
+def _stage_routing(
     stage: PipelineStage,
-    borrower_message: str,
-    collected_fields: dict[str, bool],
-    turn_index: int,
-) -> tuple[dict[str, bool], bool, str, str]:
+) -> tuple[AgentChannel, PipelineStage | None]:
+    """Return (channel, next_stage) for the given pipeline stage."""
     if stage == PipelineStage.ASSESSMENT:
-        return _assessment_logic(
-            borrower_message=borrower_message,
-            collected_fields=collected_fields,
-            turn_index=turn_index,
-        )
+        return AgentChannel.CHAT, PipelineStage.RESOLUTION
     if stage == PipelineStage.RESOLUTION:
-        return _resolution_logic(
-            borrower_message=borrower_message,
-            collected_fields=collected_fields,
-            turn_index=turn_index,
-        )
-    return _final_notice_logic(
-        borrower_message=borrower_message,
-        collected_fields=collected_fields,
-        turn_index=turn_index,
-    )
-
-
-_PROMPT_FILES = {
-    PipelineStage.ASSESSMENT: "assessment.txt",
-    PipelineStage.RESOLUTION: "resolution.txt",
-    PipelineStage.FINAL_NOTICE: "final_notice.txt",
-}
-
-
-@lru_cache(maxsize=3)
-def _load_prompt(stage: PipelineStage) -> str:
-    """Load system prompt text from ``app/prompts/<stage>.txt``."""
-    filename = _PROMPT_FILES[stage]
-    path = Path(__file__).resolve().parent.parent / "prompts" / filename
-    return path.read_text(encoding="utf-8").strip()
-
-
-def _stage_defaults(
-    stage: PipelineStage,
-) -> tuple[AgentChannel, PipelineStage | None, str]:
-    system_prompt = _load_prompt(stage)
-    if stage == PipelineStage.ASSESSMENT:
-        return AgentChannel.CHAT, PipelineStage.RESOLUTION, system_prompt
-    if stage == PipelineStage.RESOLUTION:
-        return AgentChannel.VOICE_STUB, PipelineStage.FINAL_NOTICE, system_prompt
-    return AgentChannel.CHAT, None, system_prompt
+        return AgentChannel.VOICE_STUB, PipelineStage.FINAL_NOTICE
+    return AgentChannel.CHAT, None
 
 
 def _final_notice_expiry_date(
@@ -350,35 +223,6 @@ def _final_notice_expiry_date(
 ) -> str:
     anchor = base_date or datetime.now(timezone.utc).date()
     return (anchor + timedelta(days=window_days)).isoformat()
-
-
-def _build_turn_directives(
-    *,
-    stage: PipelineStage,
-    stage_complete: bool,
-    final_notice_expiry: str | None = None,
-) -> str:
-    if stage == PipelineStage.FINAL_NOTICE:
-        expiry = final_notice_expiry or _final_notice_expiry_date()
-        completion_instruction = (
-            "Record the borrower's final response and close the conversation in a "
-            "declarative statement. Do not ask a follow-up question."
-            if stage_complete
-            else "Ask one concrete acknowledgement question and wait for the "
-            "borrower's response."
-        )
-        return (
-            "Respond in 3-6 concise sentences. "
-            f"Use this exact hard expiry date: {expiry}. "
-            "Never use placeholders (for example, '[insert hard expiry date]'). "
-            f"{completion_instruction}"
-        )
-
-    return (
-        "Respond in 3-6 concise sentences. "
-        "If stage is incomplete, ask one concrete follow-up question. "
-        "If complete, provide a brief transition-ready response."
-    )
 
 
 async def _compress_overflow(
@@ -451,7 +295,7 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
             "action=hardcoded_reply",
             turn_input.stage.value, turn_input.turn_index, msg_tokens,
         )
-        channel, next_stage, _ = _stage_defaults(turn_input.stage)
+        channel, next_stage = _stage_routing(turn_input.stage)
         return StageTurnOutput(
             stage=turn_input.stage,
             channel=channel,
@@ -473,7 +317,7 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
 
     # --- Compliance pre-checks on borrower input ---
     flags = ComplianceFlags(**turn_input.compliance_flags.model_dump())
-    channel, next_stage, _ = _stage_defaults(turn_input.stage)
+    channel, next_stage = _stage_routing(turn_input.stage)
 
     borrower_message, pii_redacted = redact_pii(turn_input.borrower_message)
     if pii_redacted:
@@ -539,70 +383,38 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
             turn_input.stage.value, turn_input.turn_index,
         )
 
-    channel, next_stage, system_prompt = _stage_defaults(turn_input.stage)
+    channel, next_stage = _stage_routing(turn_input.stage)
 
-    updated_fields, stage_complete, transition_reason, decision = _evaluate_stage_turn(
-        stage=turn_input.stage,
-        borrower_message=borrower_message,
-        collected_fields=turn_input.collected_fields,
-        turn_index=turn_input.turn_index,
-    )
+    field_keys = _STAGE_FIELD_KEYS.get(turn_input.stage, [])
+    prior_fields = {k: turn_input.collected_fields.get(k, False) for k in field_keys}
 
-    missing_fields = [key for key, value in updated_fields.items() if not value]
     final_notice_expiry = (
         _final_notice_expiry_date()
         if turn_input.stage == PipelineStage.FINAL_NOTICE
         else None
     )
-    report = ContextBudgetReport(limit=MAX_CONTEXT_TOKENS)
 
-    report.add("system_prompt", system_prompt)
-
-    snapshot_section = f"Borrower snapshot:\n{_borrower_snapshot(turn_input.borrower)}"
-    turn_meta_lines = [
-        f"Current stage: {turn_input.stage.value}",
-        f"Turn index in stage: {turn_input.turn_index}",
-        f"Borrower message: {borrower_message}",
-        f"Collected fields: {updated_fields}",
-        f"Missing fields: {missing_fields if missing_fields else 'none'}",
-        f"Transition reason: {transition_reason}",
-        f"Stage complete this turn: {stage_complete}",
-    ]
-    if flags.hardship_detected:
-        turn_meta_lines.append(
-            "COMPLIANCE: Hardship detected — offer hardship referral route. "
-            "Do not pressure the borrower."
-        )
-    if final_notice_expiry:
-        turn_meta_lines.append(f"Hard expiry date: {final_notice_expiry}")
-    turn_meta_section = "\n".join(turn_meta_lines)
-    transcript_section = (
-        "Recent transcript:\n"
-        f"{_format_recent_transcript(turn_input.transcript)}"
-    )
-    directives_section = _build_turn_directives(
+    # --- Assemble prompt via registry + assembler ---
+    registry = get_prompt_registry()
+    config = registry.get_agent_config(turn_input.stage)
+    assembled = assemble_agent_prompt(
+        config,
+        borrower=turn_input.borrower,
+        borrower_message=borrower_message,
         stage=turn_input.stage,
-        stage_complete=stage_complete,
+        turn_index=turn_input.turn_index,
+        prior_fields=prior_fields,
+        transcript=turn_input.transcript,
+        completed_stages=turn_input.completed_stages,
+        flags=flags,
         final_notice_expiry=final_notice_expiry,
     )
-    if turn_input.stage in (PipelineStage.RESOLUTION, PipelineStage.FINAL_NOTICE):
-        directives_section += f" {offer_policy_directive()}"
-        directives_section += f" {allowed_consequences_directive()}"
+    system_prompt = assembled.system_prompt
+    user_prompt = assembled.user_prompt
 
-    handoff_section = ""
-    if turn_input.completed_stages:
-        handoff_section = build_handoff_summary(
-            turn_input.completed_stages,
-            turn_input.borrower.model_dump(mode="json"),
-            [msg.model_dump(mode="json") for msg in turn_input.transcript],
-            target_stage=turn_input.stage.value,
-        )
-        report.handoff_tokens = report.add("handoff", handoff_section)
-
-    report.add("snapshot", snapshot_section)
-    report.add("turn_meta", turn_meta_section)
-    report.add("transcript", transcript_section)
-    report.add("directives", directives_section)
+    report = ContextBudgetReport(limit=MAX_CONTEXT_TOKENS)
+    report.add("system_prompt", system_prompt)
+    report.add("user_prompt", user_prompt)
     report.pre_overflow_tokens = report.total_tokens
 
     if report.total_tokens > MAX_CONTEXT_TOKENS:
@@ -612,12 +424,30 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
             report.total_tokens, MAX_CONTEXT_TOKENS,
         )
 
-        system_tokens = count_tokens(system_prompt)
+        st = assembled.metadata.get("section_tokens", {})
+        system_tokens = st.get("system_prompt", count_tokens(system_prompt))
+        directives_tokens = st.get("directives", 0)
+        turn_meta_tokens = st.get("turn_meta", 0)
         available = MAX_CONTEXT_TOKENS - system_tokens
-        directives_tokens = count_tokens(directives_section)
-        turn_meta_tokens = count_tokens(turn_meta_section)
         reserved = directives_tokens + turn_meta_tokens
         compressible_budget = max(50, available - reserved)
+
+        snapshot_section = (
+            f"Borrower snapshot:\n"
+            f"{_borrower_snapshot_for_overflow(turn_input.borrower, identity_confirmed=prior_fields.get('identity_confirmed', False), stage=turn_input.stage)}"
+        )
+        transcript_section = (
+            "Recent transcript:\n"
+            f"{_format_recent_transcript(turn_input.transcript)}"
+        )
+        handoff_section = ""
+        if turn_input.completed_stages:
+            handoff_section = build_handoff_summary(
+                turn_input.completed_stages,
+                turn_input.borrower.model_dump(mode="json"),
+                [msg.model_dump(mode="json") for msg in turn_input.transcript],
+                target_stage=turn_input.stage.value,
+            )
 
         compressible_content = ""
         if handoff_section:
@@ -639,11 +469,30 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
             used_llm, used_fallback,
         )
 
-        user_prompt = (
-            "Continue the debt-collection conversation for the current stage.\n\n"
-            f"{compressed}\n\n"
-            f"{turn_meta_section}\n\n"
-            f"{directives_section}"
+        turn_meta_lines = [
+            f"Current stage: {turn_input.stage.value}",
+            f"Turn index in stage: {turn_input.turn_index}",
+            f"Borrower message: {borrower_message}",
+            f"Collected fields so far: {prior_fields}",
+        ]
+        if flags.hardship_detected:
+            turn_meta_lines.append(
+                "COMPLIANCE: Hardship detected \u2014 offer hardship referral route. "
+                "Do not pressure the borrower."
+            )
+        if final_notice_expiry:
+            turn_meta_lines.append(f"Hard expiry date: {final_notice_expiry}")
+        turn_meta_section = "\n".join(turn_meta_lines)
+
+        directives_section = _render_turn_directives(config, final_notice_expiry)
+        compliance_dir = _render_compliance_directives(config)
+        if compliance_dir:
+            directives_section += f" {compliance_dir}"
+
+        user_prompt = assemble_overflow_user_prompt(
+            compressed=compressed,
+            turn_meta_section=turn_meta_section,
+            directives_section=directives_section,
         )
 
         report.sections.clear()
@@ -653,16 +502,6 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
         report.add("directives", directives_section)
         report.post_overflow_tokens = report.total_tokens
     else:
-        user_prompt_parts = ["Continue the debt-collection conversation for the current stage.\n"]
-        if handoff_section:
-            user_prompt_parts.append(f"Prior stage context:\n{handoff_section}\n")
-        user_prompt_parts.extend([
-            f"{snapshot_section}\n",
-            f"{turn_meta_section}\n",
-            f"{transcript_section}\n",
-            directives_section,
-        ])
-        user_prompt = "\n".join(user_prompt_parts)
         report.post_overflow_tokens = report.total_tokens
 
     system_prompt, user_prompt = enforce_context_budget(
@@ -672,12 +511,37 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
     llm_result = await _get_anthropic_client().generate(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
+        max_tokens=500,
     )
-    assistant_reply = _prepend_assessment_opening_disclosure(
+
+    # --- Parse structured LLM response ---
+    parsed = _parse_stage_response(
         llm_result.text,
+        stage=turn_input.stage,
+        collected_fields=prior_fields,
+    )
+
+    assistant_reply = _prepend_assessment_opening_disclosure(
+        parsed.assistant_reply,
         stage=turn_input.stage,
         turn_index=turn_input.turn_index,
     )
+
+    updated_fields = parsed.collected_fields
+    stage_complete = parsed.stage_complete
+    transition_reason = parsed.transition_reason
+    decision = parsed.decision
+
+    # --- Turn-cap safety net: force completion at the hard limit ---
+    turn_cap = _TURN_CAPS.get(turn_input.stage, 3)
+    if not stage_complete and turn_input.turn_index >= turn_cap:
+        stage_complete = True
+        transition_reason = f"{turn_input.stage.value}_max_turns_reached"
+        decision = parsed.decision.replace("_follow_up", "_completed")
+        logger.info(
+            "turn_cap_override  stage=%s  turn=%d  cap=%d",
+            turn_input.stage.value, turn_input.turn_index, turn_cap,
+        )
 
     # --- Compliance post-checks on assistant output ---
     assistant_reply, output_pii_redacted = redact_pii(assistant_reply)

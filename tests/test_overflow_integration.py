@@ -48,7 +48,7 @@ def _make_payload(
             "collected_fields": {
                 "identity_confirmed": True,
                 "debt_acknowledged": True,
-                "ability_to_pay_discussed": True,
+                "financial_situation_gathered": True,
             },
             "transition_reason": "fields_collected",
             "turns": 3,
@@ -58,6 +58,7 @@ def _make_payload(
         "borrower": {
             "borrower_id": "b-overflow-test",
             "account_reference": "acct-9999",
+            "date_of_birth": "1987-04-12",
             "debt_amount": 2500.00,
             "currency": "USD",
             "days_past_due": 45,
@@ -113,6 +114,7 @@ class TestOverflowPath:
             "borrower": {
                 "borrower_id": "b-overflow-test",
                 "account_reference": "acct-9999",
+                "date_of_birth": "1987-04-12",
                 "debt_amount": 2500.00,
                 "currency": "USD",
                 "days_past_due": 45,
@@ -129,7 +131,7 @@ class TestOverflowPath:
                 "collected_fields": {
                     "identity_confirmed": True,
                     "debt_acknowledged": True,
-                    "ability_to_pay_discussed": True,
+                    "financial_situation_gathered": True,
                 },
                 "transition_reason": "fields_collected",
                 "turns": 3,
@@ -149,7 +151,7 @@ class TestOverflowPath:
                 "collected_fields": {
                     "identity_confirmed": True,
                     "debt_acknowledged": True,
-                    "ability_to_pay_discussed": True,
+                    "financial_situation_gathered": True,
                 },
                 "transition_reason": "fields_collected",
                 "turns": 3,
@@ -215,6 +217,7 @@ def _make_oversized_payload(stage: str = "assessment"):
         "borrower": {
             "borrower_id": "b-oversized-test",
             "account_reference": "acct-1234",
+            "date_of_birth": "1980-01-15",
             "debt_amount": 1000.00,
             "currency": "USD",
             "days_past_due": 30,

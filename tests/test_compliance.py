@@ -73,6 +73,7 @@ def _base_payload(
         "borrower": {
             "borrower_id": "b-compliance-test",
             "account_reference": "acct-5678",
+            "date_of_birth": "1982-06-20",
             "debt_amount": 2000.00,
             "currency": "USD",
             "days_past_due": 45,

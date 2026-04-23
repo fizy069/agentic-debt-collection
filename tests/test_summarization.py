@@ -118,7 +118,7 @@ class TestPruneToBudget:
             "assessment": {
                 "identity_confirmed": True,
                 "debt_acknowledged": True,
-                "ability_to_pay_discussed": True,
+                "financial_situation_gathered": True,
                 "turns": 3,
                 "reason": "fields_collected",
             },

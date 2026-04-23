@@ -33,14 +33,16 @@ _ASSESSMENT_TO_RESOLUTION = SummarizationPolicy(
     keep_fields=(
         "identity_confirmed",
         "debt_acknowledged",
-        "ability_to_pay_discussed",
+        "financial_situation_gathered",
     ),
     keep_signals=(
         "identity verification status",
         "debt amount and acknowledgement",
-        "ability to pay or hardship indicators",
+        "employment status and income",
+        "reason for default",
+        "monthly payment capacity",
+        "hardship or stop-contact flags",
         "borrower stance",
-        "stop-contact requests",
     ),
     remove_signals=(
         "greeting pleasantries",
@@ -50,8 +52,9 @@ _ASSESSMENT_TO_RESOLUTION = SummarizationPolicy(
     system_instruction=(
         "Compress the assessment stage into a concise JSON summary for the "
         "resolution agent. Preserve identity status, debt acknowledgement, "
-        "ability-to-pay signals, and any hardship or stop-contact flags. "
-        "Remove pleasantries, repeated questions, and filler."
+        "employment/income details, reason for default, payment capacity, "
+        "and any hardship or stop-contact flags. Remove pleasantries, "
+        "repeated questions, and filler."
     ),
 )
 
@@ -143,21 +146,24 @@ def build_overflow_prompt(
 
     Returns (system_prompt, user_prompt) designed to be sent to the LLM
     as a dedicated compression call with strict keep/remove instructions.
+    The system prompt is loaded from the centralized prompt registry.
     """
-    system = (
-        "You are a context compressor. Output ONLY a compact JSON object. "
-        "No markdown, no explanation, no wrapping."
+    from app.services.prompt_assembler import assemble_overflow_prompt as _assemble
+    from app.services.prompt_registry import get_prompt_registry
+
+    from app.models.pipeline import PipelineStage
+    stage = PipelineStage(policy.stage) if policy.stage in {s.value for s in PipelineStage} else PipelineStage.RESOLUTION
+    registry = get_prompt_registry()
+    config = registry.get_overflow_config(stage)
+    assembled = _assemble(
+        config,
+        policy_system_instruction=policy.system_instruction,
+        keep_signals=policy.keep_signals,
+        remove_signals=policy.remove_signals,
+        content_to_compress=content_to_compress,
+        target_tokens=target_tokens,
     )
-    user = (
-        f"{policy.system_instruction}\n\n"
-        f"KEEP these data points:\n"
-        + "\n".join(f"- {s}" for s in policy.keep_signals)
-        + "\n\nREMOVE:\n"
-        + "\n".join(f"- {s}" for s in policy.remove_signals)
-        + f"\n\nTarget: fit within {target_tokens} tokens.\n\n"
-        f"INPUT:\n{content_to_compress}"
-    )
-    return system, user
+    return assembled.system_prompt, assembled.user_prompt
 
 
 def prioritize_handoff_fields(

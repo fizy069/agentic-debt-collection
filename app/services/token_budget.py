@@ -1,8 +1,9 @@
 """Token counting and context budget enforcement.
 
-Uses tiktoken with cl100k_base as a proxy for Claude's tokenizer.
-cl100k_base slightly overcounts vs Claude, which is the safe direction
-for budget enforcement.
+When an OpenAI model is active, ``configure_encoding`` selects the exact
+tiktoken encoding for that model (e.g. ``o200k_base`` for gpt-4o).
+Otherwise falls back to ``cl100k_base`` as a proxy for Claude's tokenizer
+(slightly overcounts, which is the safe direction for budget enforcement).
 """
 
 from __future__ import annotations
@@ -20,11 +21,49 @@ MAX_BORROWER_MESSAGE_TOKENS = 2000
 
 OVERSIZED_MESSAGE_REPLY = "Please reply concisely with the answer."
 
-_encoding = tiktoken.get_encoding("cl100k_base")
+_DEFAULT_ENCODING = "cl100k_base"
+_encoding = tiktoken.get_encoding(_DEFAULT_ENCODING)
+_active_encoding_name: str = _DEFAULT_ENCODING
+
+
+def configure_encoding(model: str | None = None) -> str:
+    """Set the module-level tokenizer encoding to match *model*.
+
+    For recognised OpenAI models ``tiktoken.encoding_for_model`` returns the
+    exact encoding (``o200k_base`` for gpt-4o / gpt-4o-mini, etc.).
+    For unknown or non-OpenAI models the default ``cl100k_base`` proxy is kept.
+
+    Returns the name of the selected encoding.
+    """
+    global _encoding, _active_encoding_name  # noqa: PLW0603
+
+    if model:
+        try:
+            _encoding = tiktoken.encoding_for_model(model)
+            _active_encoding_name = _encoding.name
+            logger.info(
+                "Token encoding set to %s for model %s",
+                _active_encoding_name, model,
+            )
+            return _active_encoding_name
+        except KeyError:
+            logger.info(
+                "No tiktoken encoding for model %s – keeping %s",
+                model, _DEFAULT_ENCODING,
+            )
+
+    _encoding = tiktoken.get_encoding(_DEFAULT_ENCODING)
+    _active_encoding_name = _DEFAULT_ENCODING
+    return _active_encoding_name
+
+
+def get_active_encoding_name() -> str:
+    """Return the name of the currently active tiktoken encoding."""
+    return _active_encoding_name
 
 
 def count_tokens(text: str) -> int:
-    """Return the token count for *text*."""
+    """Return the token count for *text* using the active encoding."""
     if not text:
         return 0
     return len(_encoding.encode(text))

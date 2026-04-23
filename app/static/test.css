@@ -1,0 +1,170 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { height: 100%; }
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+body.metadata-hidden .metadata-only { display: none !important; }
+
+header { padding: 1rem 1.5rem; background: #1e293b; border-bottom: 1px solid #334155; display: flex; align-items: center; gap: 1rem; }
+header h1 { font-size: 1rem; font-weight: 600; color: #f8fafc; }
+.badge { font-size: 0.7rem; padding: 2px 8px; border-radius: 9999px; font-weight: 500; }
+.badge-stage { background: #1d4ed8; color: #bfdbfe; }
+.badge-done { background: #15803d; color: #bbf7d0; }
+.badge-err { background: #b91c1c; color: #fecaca; }
+main { flex: 1; min-height: 0; display: flex; flex-direction: column; max-width: 720px; width: 100%; margin: 0 auto; overflow: hidden; }
+
+/* setup form */
+#setup { padding: 1.5rem; display: flex; flex-direction: column; gap: 0.75rem; min-height: 0; overflow-y: auto; }
+#setup h2 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; margin-bottom: 0.25rem; }
+.field { display: flex; gap: 0.5rem; align-items: center; }
+.field label { width: 130px; font-size: 0.8rem; color: #94a3b8; flex-shrink: 0; }
+.field input { flex: 1; padding: 6px 10px; border-radius: 6px; border: 1px solid #334155; background: #1e293b; color: #f1f5f9; font-size: 0.85rem; }
+.field input:focus { outline: none; border-color: #3b82f6; }
+button { padding: 8px 18px; border-radius: 6px; border: none; font-size: 0.85rem; font-weight: 500; cursor: pointer; transition: background 0.15s; }
+.btn-primary { background: #2563eb; color: #fff; }
+.btn-primary:hover { background: #1d4ed8; }
+.btn-primary:disabled { background: #334155; color: #64748b; cursor: not-allowed; }
+
+/* chat area */
+#chat-area { display: none; flex: 1; flex-direction: column; min-height: 0; }
+#messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-behavior: smooth;
+  padding: 1rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.msg { max-width: 85%; padding: 8px 12px; border-radius: 10px; font-size: 0.85rem; line-height: 1.5; word-wrap: break-word; }
+.msg-borrower { align-self: flex-end; background: #1d4ed8; color: #fff; border-bottom-right-radius: 2px; }
+.msg-agent { align-self: flex-start; background: #1e293b; color: #e2e8f0; border: 1px solid #334155; border-bottom-left-radius: 2px; }
+.msg-system { align-self: center; background: transparent; color: #64748b; font-size: 0.75rem; font-style: italic; }
+.msg-stage { font-size: 0.65rem; color: #94a3b8; margin-top: 2px; }
+
+/* input bar */
+#input-bar { padding: 0.75rem 1.5rem; background: #1e293b; border-top: 1px solid #334155; display: flex; gap: 0.5rem; }
+#input-bar input { flex: 1; padding: 8px 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #f1f5f9; font-size: 0.85rem; }
+#input-bar input:focus { outline: none; border-color: #3b82f6; }
+
+/* status bar */
+#status-bar { padding: 0.5rem 1.5rem; background: #1e293b; border-top: 1px solid #334155; font-size: 0.7rem; color: #64748b; display: flex; gap: 1rem; }
+
+/* incoming call screen */
+#call-incoming {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 2rem 1.5rem;
+  background: radial-gradient(circle at top, #1e293b 0%, #0f172a 65%);
+  animation: pulse-border 2s ease-in-out infinite;
+}
+@keyframes pulse-border {
+  0%, 100% { box-shadow: inset 0 0 0 2px rgba(51, 65, 85, 0.8); }
+  50% { box-shadow: inset 0 0 0 2px rgba(34, 197, 94, 0.7); }
+}
+#call-incoming .call-icon {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: #15803d;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
+  animation: ring 1.2s ease-in-out infinite;
+}
+@keyframes ring {
+  0%, 100% { transform: rotate(0deg); }
+  10% { transform: rotate(14deg); }
+  20% { transform: rotate(-10deg); }
+  30% { transform: rotate(8deg); }
+  40% { transform: rotate(-6deg); }
+  50%, 100% { transform: rotate(0deg); }
+}
+#call-incoming .call-label { font-size: 1.05rem; color: #f8fafc; font-weight: 700; }
+#call-incoming .call-sub { font-size: 0.85rem; color: #94a3b8; text-align: center; }
+#call-incoming .call-actions { display: flex; gap: 1rem; margin-top: 0.35rem; }
+.btn-accept { background: #15803d; color: #fff; padding: 10px 28px; border-radius: 9999px; font-weight: 600; }
+.btn-accept:hover { background: #16a34a; }
+.btn-decline { background: #7f1d1d; color: #fecaca; padding: 10px 28px; border-radius: 9999px; font-weight: 600; }
+.btn-decline:hover { background: #991b1b; }
+
+/* active call screen */
+#call-panel {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 1001;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 2rem 1.5rem;
+  background: radial-gradient(circle at top, #1e293b 0%, #0f172a 72%);
+}
+#call-panel .call-live-label {
+  font-size: 0.95rem;
+  color: #e2e8f0;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+#call-panel .call-status-pill {
+  font-size: 0.72rem;
+  padding: 5px 14px;
+  border-radius: 9999px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.pill-idle { background: #334155; color: #94a3b8; }
+.pill-listening { background: #dc2626; color: #fff; animation: pulse-pill 1s ease-in-out infinite; }
+@keyframes pulse-pill {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+.pill-thinking { background: #ca8a04; color: #fff; }
+.pill-speaking { background: #2563eb; color: #fff; }
+#call-panel .call-controls { display: flex; gap: 1rem; align-items: center; }
+.btn-endcall { background: #b91c1c; color: #fff; padding: 8px 22px; border-radius: 9999px; font-size: 0.8rem; font-weight: 600; }
+.btn-endcall:hover { background: #dc2626; }
+
+/* volume visualizer */
+.volume-bar-container {
+  width: 220px;
+  height: 8px;
+  background: #334155;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.volume-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: #22c55e;
+  border-radius: 4px;
+  transition: width 0.08s linear;
+}
+
+@media (max-width: 640px) {
+  header { padding: 0.85rem 1rem; }
+  #setup { padding: 1rem; }
+  #messages { padding: 0.85rem 1rem; }
+  #input-bar { padding: 0.75rem 1rem; }
+  #status-bar { padding: 0.5rem 1rem; }
+  .field { flex-direction: column; align-items: stretch; }
+  .field label { width: auto; }
+  .volume-bar-container { width: min(82vw, 300px); }
+}

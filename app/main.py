@@ -19,10 +19,12 @@ from app.logging_config import setup_logging
 from app.models.pipeline import (
     BorrowerMessageRequest,
     BorrowerMessageResponse,
+    BorrowerRequest,
     PipelineStartRequest,
     PipelineStartResponse,
     PipelineStatus,
 )
+from app.services.account_store import get_account_store
 from app.services.voice_client import (
     MAX_UPLOAD_BYTES,
     VoiceClient,
@@ -89,9 +91,23 @@ def get_task_queue(request: Request) -> str:
     return task_queue
 
 
+def _is_enabled_env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @app.get("/health")
 async def healthcheck() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/accounts")
+async def list_accounts() -> dict[str, list[str]]:
+    """Return available borrower IDs from the account store."""
+    store = get_account_store()
+    return {"borrower_ids": store.list_ids()}
 
 
 @app.post(
@@ -104,14 +120,23 @@ async def start_pipeline(
     client: Client = Depends(get_temporal_client),
     task_queue: str = Depends(get_task_queue),
 ) -> PipelineStartResponse:
-    workflow_id = payload.workflow_id or f"pipeline-{payload.borrower.borrower_id}-{uuid4().hex[:8]}"
+    store = get_account_store()
+    account = store.get(payload.borrower_id)
+    if account is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No account found for borrower_id '{payload.borrower_id}'.",
+        )
 
-    logger.info("POST /pipelines  workflow_id=%s  borrower=%s", workflow_id, payload.borrower.borrower_id)
+    borrower = BorrowerRequest.from_account(account, payload.borrower_message)
+    workflow_id = payload.workflow_id or f"pipeline-{borrower.borrower_id}-{uuid4().hex[:8]}"
+
+    logger.info("POST /pipelines  workflow_id=%s  borrower=%s", workflow_id, borrower.borrower_id)
 
     try:
         handle = await client.start_workflow(
             BorrowerWorkflow.run,
-            {"borrower": payload.borrower.model_dump(mode="json")},
+            {"borrower": borrower.model_dump(mode="json")},
             id=workflow_id,
             task_queue=task_queue,
             execution_timeout=timedelta(hours=24),
@@ -199,10 +224,17 @@ async def get_pipeline_status(
 
 @app.get("/config")
 async def get_config() -> dict[str, object]:
-    return {
-        "agent2_voice_enabled": is_voice_enabled(),
-        "voice_stage": "resolution",
+    voice_enabled = is_voice_enabled()
+    show_internal_metadata = _is_enabled_env_flag("TEST_UI_SHOW_METADATA", default=False)
+
+    cfg: dict[str, object] = {
+        "agent2_voice_enabled": voice_enabled,
+        "voice_enabled": voice_enabled,
+        "show_internal_metadata": show_internal_metadata,
     }
+    if show_internal_metadata:
+        cfg["voice_stage"] = "resolution"
+    return cfg
 
 
 _VOICE_POLL_INTERVAL_S = 0.25

@@ -194,13 +194,29 @@ def check_offer_bounds(text: str, policy: OfferPolicy = OFFER_POLICY) -> list[st
 
 
 def offer_policy_directive(policy: OfferPolicy = OFFER_POLICY) -> str:
-    """Produce a concrete directive string to inject into the LLM prompt."""
-    return (
-        f"Settlement offers must be between {policy.min_settlement_pct}% and "
-        f"{policy.max_settlement_pct}% of the outstanding balance. "
-        f"Payment plans must be between {policy.min_plan_months} and "
-        f"{policy.max_plan_months} months."
-    )
+    """Produce a concrete directive string to inject into the LLM prompt.
+
+    Reads the template from the centralized prompt registry so the
+    self-learning loop can modify the wording without code changes.
+    Falls back to an inline template if the registry is unavailable.
+    """
+    try:
+        from app.services.prompt_registry import get_prompt_registry
+        registry = get_prompt_registry()
+        section = registry.get_section("compliance_directives:offer_policy")
+        return section.content.format(
+            min_settlement_pct=policy.min_settlement_pct,
+            max_settlement_pct=policy.max_settlement_pct,
+            min_plan_months=policy.min_plan_months,
+            max_plan_months=policy.max_plan_months,
+        )
+    except Exception:
+        return (
+            f"Settlement offers must be between {policy.min_settlement_pct}% and "
+            f"{policy.max_settlement_pct}% of the outstanding balance. "
+            f"Payment plans must be between {policy.min_plan_months} and "
+            f"{policy.max_plan_months} months."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -237,9 +253,20 @@ def check_false_threats(text: str) -> list[str]:
 
 
 def allowed_consequences_directive() -> str:
-    """Produce a concrete directive listing permitted consequences."""
+    """Produce a concrete directive listing permitted consequences.
+
+    Reads the template from the centralized prompt registry so the
+    self-learning loop can modify the wording without code changes.
+    Falls back to an inline template if the registry is unavailable.
+    """
     items = ", ".join(ALLOWED_CONSEQUENCES)
-    return (
-        f"The only consequences you may reference are: {items}. "
-        "Do not invent, imply, or state any other consequences."
-    )
+    try:
+        from app.services.prompt_registry import get_prompt_registry
+        registry = get_prompt_registry()
+        section = registry.get_section("compliance_directives:allowed_consequences")
+        return section.content.format(consequences=items)
+    except Exception:
+        return (
+            f"The only consequences you may reference are: {items}. "
+            "Do not invent, imply, or state any other consequences."
+        )

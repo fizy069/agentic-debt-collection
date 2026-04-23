@@ -34,6 +34,7 @@ def _make_payload(*, turn_index: int) -> dict:
         "borrower": {
             "borrower_id": "b-disclosure-test",
             "account_reference": "acct-4321",
+            "date_of_birth": "1991-10-03",
             "debt_amount": 1500.00,
             "currency": "USD",
             "days_past_due": 30,
