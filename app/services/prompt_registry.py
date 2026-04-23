@@ -145,6 +145,20 @@ class PromptRegistry:
             ),
         )
 
+        for eval_judge_key in ("eval_compliance_judge", "eval_quality_judge", "eval_handoff_judge"):
+            ej = raw.get(eval_judge_key)
+            if ej:
+                self._register(
+                    eval_judge_key,
+                    PromptSection(
+                        name=eval_judge_key,
+                        content=ej["content"],
+                        version=ej["version"],
+                        stage=None,
+                        section_type="system",
+                    ),
+                )
+
         ps = raw.get("proposer_system")
         if ps:
             self._register(

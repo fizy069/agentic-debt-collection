@@ -134,6 +134,44 @@ async def _main() -> None:
 
     _write_json(run_dir / "evolution_timeline.json", timeline)
 
+    # -- Meta-evaluation artifacts (Darwin Godel Machine) --
+    if result.meta_report is not None:
+        _write_json(run_dir / "meta_report.json", result.meta_report.to_dict())
+
+    for mi_idx, mi in enumerate(result.meta_iterations):
+        mi_dir = run_dir / f"meta_iteration_{mi_idx + 1}"
+        mi_dir.mkdir(parents=True, exist_ok=True)
+
+        mi_data: dict = {
+            "judge_name": mi.judge_name,
+            "section_key": mi.section_key,
+            "adopted": mi.adopted,
+            "reason": mi.reason,
+            "skipped": mi.skipped,
+        }
+        if mi.proposed:
+            _write_text(mi_dir / "candidate_judge_prompt.txt", mi.proposed.content)
+            mi_data["proposed_version"] = mi.proposed.version
+            mi_data["change_summary"] = mi.proposed.change_summary
+            mi_data["rationale"] = mi.proposed.rationale
+
+        if mi.meta_ab_result:
+            meta_ab_data = {
+                "judge_name": mi.meta_ab_result.judge_name,
+                "baseline_accuracy": mi.meta_ab_result.baseline_accuracy,
+                "candidate_accuracy": mi.meta_ab_result.candidate_accuracy,
+                "p_value": mi.meta_ab_result.p_value,
+                "cohen_d": mi.meta_ab_result.cohen_d,
+                "significant": mi.meta_ab_result.significant,
+                "critical_rule_regression": mi.meta_ab_result.critical_rule_regression,
+                "adopt": mi.meta_ab_result.adopt,
+                "reason": mi.meta_ab_result.reason,
+            }
+            _write_json(mi_dir / "meta_ab_result.json", meta_ab_data)
+            mi_data.update(meta_ab_data)
+
+        _write_json(mi_dir / "decision.json", mi_data)
+
     from app.services.prompt_registry import get_prompt_registry as gpr
     _write_json(run_dir / "final_registry_snapshot.json", gpr().snapshot())
 
@@ -150,6 +188,12 @@ async def _main() -> None:
         sum(1 for ir in result.iterations if ir.adopted),
         result.stop_reason,
         result.total_cost_usd,
+    )
+    meta_flagged = len(result.meta_report.flagged_judges) if result.meta_report else 0
+    meta_corrected = sum(1 for mi in result.meta_iterations if mi.adopted)
+    logger.info(
+        "  meta: judges_flagged=%d  judges_corrected=%d",
+        meta_flagged, meta_corrected,
     )
 
 

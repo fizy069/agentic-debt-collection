@@ -25,6 +25,7 @@ from app.services.compliance import (
     detect_stop_contact,
     redact_pii,
 )
+from app.services.prompt_registry import get_prompt_registry
 
 if TYPE_CHECKING:
     from app.eval.cost_ledger import CostLedger
@@ -252,6 +253,7 @@ class ComplianceJudge:
         if self._ledger is not None:
             self._ledger.check_budget_or_raise()
 
+        system_prompt = get_prompt_registry().get_section("eval_compliance_judge").content
         transcript_text = _format_conversation(record)
         user_prompt = (
             f"Persona: {record.scenario.persona.persona_type.value}\n"
@@ -263,7 +265,7 @@ class ComplianceJudge:
 
         try:
             result = await self._client.generate(
-                system_prompt=_COMPLIANCE_SYSTEM,
+                system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 max_tokens=1500,
             )
@@ -565,6 +567,7 @@ class QualityJudge:
         if self._ledger is not None:
             self._ledger.check_budget_or_raise()
 
+        system_prompt = get_prompt_registry().get_section("eval_quality_judge").content
         transcript_text = _format_conversation(record)
         user_prompt = (
             f"Persona: {record.scenario.persona.persona_type.value}\n"
@@ -575,7 +578,7 @@ class QualityJudge:
 
         try:
             result = await self._client.generate(
-                system_prompt=_QUALITY_SYSTEM,
+                system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 max_tokens=1000,
             )
@@ -669,6 +672,7 @@ class HandoffJudge:
         if self._ledger is not None:
             self._ledger.check_budget_or_raise()
 
+        system_prompt = get_prompt_registry().get_section("eval_handoff_judge").content
         transcript_text = _format_conversation(record)
         handoff_summaries = "\n".join(
             f"Handoff into {s.stage}: {s.handoff_summary or '(none)'}"
@@ -684,7 +688,7 @@ class HandoffJudge:
 
         try:
             result = await self._client.generate(
-                system_prompt=_HANDOFF_SYSTEM,
+                system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 max_tokens=1000,
             )

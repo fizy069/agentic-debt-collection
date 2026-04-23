@@ -15,8 +15,11 @@ from typing import Any
 from app.eval.ab_harness import ABHarness, ABResult
 from app.eval.audit_trail import AuditTrail
 from app.eval.cost_ledger import BudgetExceededError, CostLedger
-from app.eval.failure_miner import FailureDigest, mine_failures
+from app.eval.failure_miner import FailureDigest, SectionFailures, mine_failures
 from app.eval.harness import EvalHarness
+from app.eval.meta_ab import MetaABHarness, MetaABResult
+from app.eval.meta_eval import JudgeReport, MetaEvaluator, MetaReport
+from app.eval.meta_oracle import MetaOracle
 from app.eval.models import EvalConfig, EvalRunResult
 from app.eval.proposer import ProposalRejectedError, PromptProposer, ProposedSection
 from app.services.prompt_registry import (
@@ -40,6 +43,19 @@ class IterationResult:
 
 
 @dataclass
+class MetaIterationResult:
+    """Result of one meta-evaluation judge-improvement attempt."""
+
+    judge_name: str
+    section_key: str
+    proposed: ProposedSection | None = None
+    meta_ab_result: MetaABResult | None = None
+    adopted: bool = False
+    reason: str = ""
+    skipped: bool = False
+
+
+@dataclass
 class SelfLearnConfig:
     eval_config: EvalConfig
     max_iterations: int = 3
@@ -57,6 +73,8 @@ class SelfLearnResult:
     final_result: EvalRunResult | None = None
     total_cost_usd: float = 0.0
     stop_reason: str = ""
+    meta_report: MetaReport | None = None
+    meta_iterations: list[MetaIterationResult] = field(default_factory=list)
 
 
 class SelfLearningLoop:
@@ -229,6 +247,11 @@ class SelfLearningLoop:
         else:
             result.stop_reason = "max_iterations_reached"
 
+        # -- Darwin Godel Machine: meta-evaluation phase --
+        meta_report, meta_iters = await self._run_meta_phase(current_result)
+        result.meta_report = meta_report
+        result.meta_iterations = meta_iters
+
         result.final_result = current_result
         result.total_cost_usd = self._ledger.total_cost_usd
 
@@ -238,6 +261,8 @@ class SelfLearningLoop:
             extra={
                 "total_cost_usd": result.total_cost_usd,
                 "iterations_completed": len(result.iterations),
+                "meta_judges_flagged": len(meta_report.flagged_judges) if meta_report else 0,
+                "meta_judges_corrected": sum(1 for m in meta_iters if m.adopted),
                 "stop_reason": result.stop_reason,
             },
         )
@@ -275,6 +300,147 @@ class SelfLearningLoop:
             audit=self._audit,
         )
         return await ab.compare(baseline_result, candidate_result)
+
+    async def _run_meta_phase(
+        self,
+        current_result: EvalRunResult,
+    ) -> tuple[MetaReport | None, list[MetaIterationResult]]:
+        """Darwin Godel Machine: evaluate judges and propose corrections."""
+        logger.info("self_learn_meta_phase  starting")
+        oracle = MetaOracle()
+        meta_evaluator = MetaEvaluator(oracle)
+        meta_report = meta_evaluator.evaluate(current_result)
+
+        self._audit.append_event(
+            "meta_eval_completed",
+            run_id=self._run_id,
+            extra=meta_report.to_dict(),
+        )
+
+        meta_iterations: list[MetaIterationResult] = []
+
+        if not meta_report.any_flagged:
+            logger.info("self_learn_meta_phase  no judges flagged")
+            return meta_report, meta_iterations
+
+        for jr in meta_report.flagged_judges:
+            if self._ledger.remaining_budget < self._estimate_iteration_cost():
+                logger.info("self_learn_meta_phase  budget exhausted, skipping judge %s", jr.judge_name)
+                break
+
+            mi = MetaIterationResult(
+                judge_name=jr.judge_name,
+                section_key=jr.section_key,
+            )
+
+            failures = self._build_judge_failure_digest(jr)
+
+            meta_iter_num = self._config.max_iterations + len(meta_iterations) + 1
+            try:
+                proposed = await self._proposer.propose(
+                    registry=get_prompt_registry(),
+                    section_key=jr.section_key,
+                    failures=failures,
+                    iteration=meta_iter_num,
+                )
+            except (ProposalRejectedError, BudgetExceededError) as exc:
+                mi.skipped = True
+                mi.reason = str(exc)
+                meta_iterations.append(mi)
+                self._audit.append_event(
+                    "meta_candidate_rejected",
+                    section_key=jr.section_key,
+                    run_id=self._run_id,
+                    rationale=str(exc),
+                )
+                continue
+
+            mi.proposed = proposed
+            self._audit.append_event(
+                "meta_candidate_proposed",
+                section_key=jr.section_key,
+                new_version=proposed.version,
+                run_id=self._run_id,
+                rationale=proposed.rationale,
+            )
+
+            registry = get_prompt_registry()
+            old_section = registry.get_section(jr.section_key)
+            old_content = old_section.content
+            old_version = old_section.version
+
+            registry.override_section(jr.section_key, proposed.content, proposed.version)
+            try:
+                candidate_result = await self._run_eval("meta_candidate")
+            except BudgetExceededError:
+                registry.override_section(jr.section_key, old_content, old_version)
+                mi.skipped = True
+                mi.reason = "budget_exceeded"
+                meta_iterations.append(mi)
+                break
+            finally:
+                registry.override_section(jr.section_key, old_content, old_version)
+
+            meta_ab = MetaABHarness(oracle, ledger=self._ledger, audit=self._audit)
+            ab_result = meta_ab.compare(
+                jr.judge_name, jr.section_key,
+                current_result, candidate_result,
+            )
+            mi.meta_ab_result = ab_result
+
+            if ab_result.adopt:
+                registry.override_section(jr.section_key, proposed.content, proposed.version)
+                mi.adopted = True
+                mi.reason = ab_result.reason
+                self._audit.append_event(
+                    "meta_correction_adopted",
+                    section_key=jr.section_key,
+                    new_version=proposed.version,
+                    run_id=self._run_id,
+                    metrics_before={"accuracy": ab_result.baseline_accuracy},
+                    metrics_after={"accuracy": ab_result.candidate_accuracy},
+                    decision="adopted",
+                    rationale=ab_result.reason,
+                )
+            else:
+                mi.adopted = False
+                mi.reason = ab_result.reason
+                self._audit.append_event(
+                    "meta_correction_rejected",
+                    section_key=jr.section_key,
+                    new_version=proposed.version,
+                    run_id=self._run_id,
+                    metrics_before={"accuracy": ab_result.baseline_accuracy},
+                    metrics_after={"accuracy": ab_result.candidate_accuracy},
+                    decision="rejected",
+                    rationale=ab_result.reason,
+                )
+
+            meta_iterations.append(mi)
+
+        return meta_report, meta_iterations
+
+    @staticmethod
+    def _build_judge_failure_digest(jr: JudgeReport) -> SectionFailures:
+        """Convert meta-eval flaws into a SectionFailures for the proposer."""
+        from app.eval.failure_miner import FailureExcerpt
+
+        excerpts = []
+        for flaw in jr.flaws:
+            excerpts.append(FailureExcerpt(
+                scenario_id="meta_eval",
+                rule_id=flaw.rule_id or "aggregate",
+                rule_name=flaw.flaw_type,
+                score=1.0 - jr.oracle_accuracy,
+                explanation=flaw.description,
+                source="meta_evaluation",
+            ))
+
+        return SectionFailures(
+            section_key=jr.section_key,
+            weighted_count=float(len(jr.flaws)) * 3.0,
+            excerpts=excerpts,
+        )
 
     def _estimate_iteration_cost(self) -> float:
         """Conservative estimate of cost for one full iteration."""
