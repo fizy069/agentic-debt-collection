@@ -1,0 +1,34 @@
+app/services/token_budget.py
+  f555bdcf59fcdca7 3-6,24-62,66
+tests/test_token_budget.py
+  f555bdcf59fcdca7 13,16,139-181
+app/services/anthropic_client.py
+  f555bdcf59fcdca7 21,60,66,71
+tests/test_anthropic_client.py
+  f555bdcf59fcdca7 11,141-173
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "3e215abd5d39c34f8f2243d785b70dee7e4e2d70",
+  "prompts": {
+    "f555bdcf59fcdca7": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "1b9cfbbc-3c46-40e0-a294-6b5c493c47c8",
+        "model": "claude-4.6-opus-max-thinking"
+      },
+      "human_author": "fizy069",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 127,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_7f63ecbcbb8eec": {
+      "author": "fizy069"
+    }
+  }
+}
