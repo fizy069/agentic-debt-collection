@@ -1,0 +1,34 @@
+.dockerignore
+  h_7f63ecbcbb8eec 1-15
+README.md
+  h_7f63ecbcbb8eec 107-118
+Dockerfile
+  h_7f63ecbcbb8eec 1-29
+docker-compose.yml
+  h_7f63ecbcbb8eec 1-65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "d69834b86efacfa93c4e60798b046ea1a9e3b9f1",
+  "prompts": {
+    "1d0eabc2ac1a5bee": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "b435efa0-a0a5-4150-947e-5f51b66c2509",
+        "model": "copilot/gpt-5.3-codex"
+      },
+      "human_author": "fizy069",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_7f63ecbcbb8eec": {
+      "author": "fizy069"
+    }
+  }
+}
