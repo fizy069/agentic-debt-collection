@@ -1,0 +1,12 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "74b31f899c934e665bc40c6664f9a1b907df81dc",
+  "prompts": {},
+  "humans": {
+    "h_7f63ecbcbb8eec": {
+      "author": "fizy069"
+    }
+  }
+}
