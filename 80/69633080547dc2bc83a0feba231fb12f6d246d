@@ -1,0 +1,98 @@
+app/models/pipeline.py
+  39da8f145b0435aa 18-38
+app/prompts/resolution.txt
+  39da8f145b0435aa 20-27
+app/eval/conversation_runner.py
+  39da8f145b0435aa 23,31,97-98,100-118,221-235
+  17d73199faf5df3d 165-173
+app/static/test.js
+  39da8f145b0435aa 176-185,198-203,258-261
+app/workflows/borrower_workflow.py
+  39da8f145b0435aa 11,22,148-149,152-176
+app/prompts/final_notice.txt
+  39da8f145b0435aa 20-26
+app/eval/judges.py
+  17d73199faf5df3d 17,30-31,40-42,301-303,305-335,341-342,346-348,351
+  3f2760eba52f1cd3 60
+  2567cfddfa3c37d6 44,75-88,95-120,135-139,142,147-162,164-166,257,274,357,386,418-419,445-447,485,554,648
+app/services/anthropic_client.py
+  2567cfddfa3c37d6 155-164
+  3f2760eba52f1cd3 33-44,53-59,77-82,88-93,110-147,153-154,165-172
+tests/test_anthropic_client.py
+  3f2760eba52f1cd3 126-177
+tests/test_compliance.py
+  2567cfddfa3c37d6 279-302
+app/eval/run_eval.py
+  3f2760eba52f1cd3 45-49,53-57
+app/services/prompt_assembler.py
+  2567cfddfa3c37d6 24,107
+  17d73199faf5df3d 212-214
+app/eval/borrower_sim.py
+  2567cfddfa3c37d6 20-27,30-32
+app/services/compliance.py
+  2567cfddfa3c37d6 8-12,149,152-157,171,183-196,199-204,206-207
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "8069633080547dc2bc83a0feba231fb12f6d246d",
+  "prompts": {
+    "17d73199faf5df3d": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "de792da9-552f-4f03-bc7f-0e04903409eb",
+        "model": "claude-opus-4-7-max"
+      },
+      "human_author": "fizy069",
+      "messages": [],
+      "total_additions": 179,
+      "total_deletions": 7,
+      "accepted_lines": 55,
+      "overriden_lines": 4
+    },
+    "2567cfddfa3c37d6": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "964d65f5-c85e-4072-806d-9dc2598dc709",
+        "model": "claude-opus-4-7-max"
+      },
+      "human_author": "fizy069",
+      "messages": [],
+      "total_additions": 261,
+      "total_deletions": 214,
+      "accepted_lines": 1347,
+      "overriden_lines": 58
+    },
+    "39da8f145b0435aa": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "76df1443-f523-4482-920b-e72150ce8071",
+        "model": "claude-opus-4-7-max"
+      },
+      "human_author": "fizy069",
+      "messages": [],
+      "total_additions": 123,
+      "total_deletions": 34,
+      "accepted_lines": 1389,
+      "overriden_lines": 0
+    },
+    "3f2760eba52f1cd3": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e5e7b69f-1c9d-480f-b451-dfc9dac647b2",
+        "model": "claude-opus-4-7-max"
+      },
+      "human_author": "fizy069",
+      "messages": [],
+      "total_additions": 154,
+      "total_deletions": 7,
+      "accepted_lines": 267,
+      "overriden_lines": 2
+    }
+  },
+  "humans": {
+    "h_7f63ecbcbb8eec": {
+      "author": "fizy069"
+    }
+  }
+}
