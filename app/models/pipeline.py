@@ -98,6 +98,16 @@ class StageTurnInput(BaseModel):
     compliance_flags: ComplianceFlags = Field(default_factory=ComplianceFlags)
 
 
+class LLMStageResponse(BaseModel):
+    """Schema the LLM must return as structured JSON from each stage turn."""
+
+    assistant_reply: str
+    stage_complete: bool
+    collected_fields: dict[str, bool]
+    transition_reason: str
+    decision: str
+
+
 class StageTurnOutput(BaseModel):
     stage: PipelineStage
     channel: AgentChannel
