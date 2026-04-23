@@ -1,0 +1,15 @@
+.venv/
+.git/
+.pytest_cache/
+__pycache__/
+*.pyc
+logs/
+data/compliance_vectors/
+data/eval_results*/
+.env
+.env.*
+!.env.example
+.vscode/
+.cursor/
+*.md
+!README.md

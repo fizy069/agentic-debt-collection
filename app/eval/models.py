@@ -136,6 +136,9 @@ class CostReport(BaseModel):
     evaluation_calls: int = 0
     prompt_generation_calls: int = 0
     total_calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    by_role: dict[str, float] = Field(default_factory=dict)
     estimated_cost_usd: float = 0.0
 
 

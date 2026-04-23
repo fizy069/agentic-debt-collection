@@ -104,6 +104,18 @@ Useful launcher flags:
 - PowerShell: `-SkipInstall`, `-OpenTerminalUI`
 - Bash: `--skip-install`, `--open-ui`
 
+#### Run with Docker
+
+```bash
+cp .env.example .env
+# then edit .env with your ANTHROPIC_API_KEY / OPENAI_API_KEY
+docker compose up --build
+```
+
+- API docs: `http://localhost:8000/docs`
+- Test console: `http://localhost:8000/test`
+- Temporal UI: `http://localhost:8233`
+
 Manual startup is also supported.
 
 Temporal:

@@ -86,4 +86,13 @@ async def generate(
         getattr(getattr(response, "usage", None), "prompt_tokens", "?"),
         getattr(getattr(response, "usage", None), "completion_tokens", "?"),
     )
-    return LLMResult(text=extract_text(response), model=model, used_fallback=False)
+    usage = getattr(response, "usage", None)
+    in_tok = getattr(usage, "prompt_tokens", 0) or 0 if usage else 0
+    out_tok = getattr(usage, "completion_tokens", 0) or 0 if usage else 0
+    return LLMResult(
+        text=extract_text(response),
+        model=model,
+        used_fallback=False,
+        input_tokens=in_tok,
+        output_tokens=out_tok,
+    )

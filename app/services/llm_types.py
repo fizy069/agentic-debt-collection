@@ -30,6 +30,8 @@ class LLMResult:
     text: str
     model: str
     used_fallback: bool = False
+    input_tokens: int = 0
+    output_tokens: int = 0
 
 
 def is_context_overflow_message(msg: str) -> bool:
