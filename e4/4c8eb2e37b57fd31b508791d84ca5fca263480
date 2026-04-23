@@ -1,0 +1,48 @@
+app/static/test.html
+  h_7f63ecbcbb8eec 7,79
+app/static/test.js
+  689d1707d98d1fad 1-520
+app/static/test.css
+  h_7f63ecbcbb8eec 1-115
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "e44c8eb2e37b57fd31b508791d84ca5fca263480",
+  "prompts": {
+    "689d1707d98d1fad": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "f16a93e4-b0c2-4858-a0eb-675f5e0d455f",
+        "model": "copilot/gpt-5.4"
+      },
+      "human_author": "fizy069",
+      "messages": [],
+      "total_additions": 520,
+      "total_deletions": 0,
+      "accepted_lines": 520,
+      "overriden_lines": 0
+    },
+    "e3d9c9ff029285ca": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "fe1ff14a-85ba-4bc7-bab4-1764ffcb17cd",
+        "model": "claude-4.6-opus-max"
+      },
+      "human_author": "fizy069",
+      "messages": [],
+      "total_additions": 195,
+      "total_deletions": 13,
+      "accepted_lines": 359,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_55bf61dfd6cf88": {
+      "author": "Mahir Ghadiali (mghadial)"
+    },
+    "h_7f63ecbcbb8eec": {
+      "author": "fizy069"
+    }
+  }
+}
