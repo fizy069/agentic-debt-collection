@@ -173,6 +173,10 @@ def build_scenario_batch(
             profile = _BORROWER_PROFILES[rng.randint(0, len(_BORROWER_PROFILES) - 1)]
             borrower_id = f"eval-{ptype.value}-{i:02d}"
             account_reference = f"ACCT{rng.randint(100000, 999999)}"
+            year = rng.randint(1955, 2000)
+            month = rng.randint(1, 12)
+            day = rng.randint(1, 28)
+            date_of_birth = f"{year:04d}-{month:02d}-{day:02d}"
             debt_amount = float(profile["debt_amount"])
             days_past_due = int(profile["days_past_due"])
             notes = str(profile.get("notes", ""))
@@ -180,6 +184,7 @@ def build_scenario_batch(
             store.put(AccountRecord(
                 borrower_id=borrower_id,
                 account_reference=account_reference,
+                date_of_birth=date_of_birth,
                 debt_amount=debt_amount,
                 currency="USD",
                 days_past_due=days_past_due,
@@ -192,6 +197,7 @@ def build_scenario_batch(
                     persona=persona,
                     borrower_id=borrower_id,
                     account_reference=account_reference,
+                    date_of_birth=date_of_birth,
                     debt_amount=debt_amount,
                     currency="USD",
                     days_past_due=days_past_due,

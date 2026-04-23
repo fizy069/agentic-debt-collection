@@ -70,7 +70,7 @@ def _make_json_response(
         "collected_fields": collected_fields or {
             "identity_confirmed": False,
             "debt_acknowledged": False,
-            "ability_to_pay_discussed": False,
+            "financial_situation_gathered": False,
         },
         "transition_reason": transition_reason,
         "decision": decision,
@@ -84,7 +84,7 @@ def test_parse_stage_response_valid_json():
         collected_fields={
             "identity_confirmed": True,
             "debt_acknowledged": True,
-            "ability_to_pay_discussed": True,
+            "financial_situation_gathered": True,
         },
         transition_reason="all_fields_collected",
         decision="assessment_completed",

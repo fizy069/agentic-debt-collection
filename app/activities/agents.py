@@ -118,7 +118,7 @@ def _prepend_assessment_opening_disclosure(
 
 
 _TURN_CAPS: dict[PipelineStage, int] = {
-    PipelineStage.ASSESSMENT: 3,
+    PipelineStage.ASSESSMENT: 5,
     PipelineStage.RESOLUTION: 3,
     PipelineStage.FINAL_NOTICE: 2,
 }
@@ -127,7 +127,7 @@ _STAGE_FIELD_KEYS: dict[PipelineStage, list[str]] = {
     PipelineStage.ASSESSMENT: [
         "identity_confirmed",
         "debt_acknowledged",
-        "ability_to_pay_discussed",
+        "financial_situation_gathered",
     ],
     PipelineStage.RESOLUTION: [
         "options_reviewed",

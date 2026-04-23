@@ -34,6 +34,10 @@ class AccountRecord(BaseModel):
         max_length=32,
         description="Internal account ref only, not full sensitive identifiers.",
     )
+    date_of_birth: str = Field(
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+        description="ISO 8601 (YYYY-MM-DD). Used for identity verification only.",
+    )
     debt_amount: float = Field(gt=0)
     currency: str = Field(default="USD", min_length=3, max_length=3)
     days_past_due: int = Field(ge=1)
@@ -48,6 +52,10 @@ class BorrowerRequest(BaseModel):
         min_length=3,
         max_length=32,
         description="Internal account ref only, not full sensitive identifiers.",
+    )
+    date_of_birth: str = Field(
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+        description="ISO 8601 (YYYY-MM-DD). Used for identity verification only.",
     )
     debt_amount: float = Field(gt=0)
     currency: str = Field(default="USD", min_length=3, max_length=3)
@@ -69,6 +77,7 @@ class BorrowerRequest(BaseModel):
         return cls(
             borrower_id=account.borrower_id,
             account_reference=account.account_reference,
+            date_of_birth=account.date_of_birth,
             debt_amount=account.debt_amount,
             currency=account.currency,
             days_past_due=account.days_past_due,

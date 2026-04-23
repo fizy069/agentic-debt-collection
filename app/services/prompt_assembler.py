@@ -58,6 +58,7 @@ def _borrower_snapshot(
         f"{header}\n"
         f"Borrower ID: {borrower.borrower_id}\n"
         f"Account Ref (last4): {masked_reference}\n"
+        f"Date of Birth (on file): {borrower.date_of_birth}\n"
         f"Debt: {borrower.debt_amount:.2f} {borrower.currency}\n"
         f"Days past due: {borrower.days_past_due}\n"
         f"Borrower message: {borrower.borrower_message}\n"

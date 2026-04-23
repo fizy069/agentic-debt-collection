@@ -36,6 +36,7 @@ class BorrowerSimulator:
         conversation_history: list[dict[str, str]],
         stage: str,
         turn_index: int,
+        account_facts: dict[str, str] | None = None,
     ) -> str:
         """Produce the borrower's next message.
 
@@ -44,6 +45,10 @@ class BorrowerSimulator:
             conversation_history: List of ``{"role": "agent"|"borrower", "text": ...}`` dicts.
             stage: Current pipeline stage name.
             turn_index: 1-based turn index within the stage.
+            account_facts: Optional map of identifiers the borrower honestly
+                knows about themselves (e.g. ``{"last4": "9876",
+                "date_of_birth": "1985-03-14"}``).  Passed so the simulator
+                can truthfully answer identity-verification questions.
 
         Returns:
             The simulated borrower reply as a plain string.
@@ -55,9 +60,20 @@ class BorrowerSimulator:
 
         history_text = "\n".join(history_lines) if history_lines else "(conversation just started)"
 
+        facts_block = ""
+        if account_facts:
+            fact_lines = [f"- {k}: {v}" for k, v in account_facts.items()]
+            facts_block = (
+                "\nFacts about yourself (use ONLY when the agent asks to verify "
+                "your identity; otherwise ignore):\n"
+                + "\n".join(fact_lines)
+                + "\n"
+            )
+
         user_prompt = (
             f"Stage: {stage} | Turn: {turn_index}\n\n"
-            f"Conversation so far:\n{history_text}\n\n"
+            f"Conversation so far:\n{history_text}\n"
+            f"{facts_block}\n"
             "Respond as the borrower in 1-3 sentences. "
             "Stay in character. Do not break the fourth wall or mention "
             "that you are an AI."

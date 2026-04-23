@@ -43,12 +43,21 @@ def _scenario_to_borrower_request(scenario: Scenario) -> BorrowerRequest:
     return BorrowerRequest(
         borrower_id=scenario.borrower_id,
         account_reference=scenario.account_reference,
+        date_of_birth=scenario.date_of_birth,
         debt_amount=scenario.debt_amount,
         currency=scenario.currency,
         days_past_due=scenario.days_past_due,
         borrower_message=scenario.borrower_message,
         notes=scenario.notes,
     )
+
+
+def _scenario_account_facts(scenario: Scenario) -> dict[str, str]:
+    """Identity facts the simulator can honestly share if asked."""
+    return {
+        "last_four_of_account": scenario.account_reference[-4:],
+        "date_of_birth": scenario.date_of_birth,
+    }
 
 
 async def run_conversation(
@@ -62,6 +71,7 @@ async def run_conversation(
     so that ``_run_stage_turn`` sees identical inputs to production.
     """
     borrower = _scenario_to_borrower_request(scenario)
+    account_facts = _scenario_account_facts(scenario)
     transcript: list[ConversationMessage] = []
     completed_stages: list[dict[str, Any]] = []
     compliance_flags = ComplianceFlags()
@@ -178,6 +188,7 @@ async def run_conversation(
                 conversation_history=conversation_history,
                 stage=stage_key,
                 turn_index=turn_index + 1,
+                account_facts=account_facts,
             )
             borrower_message = next_borrower
 
@@ -189,6 +200,7 @@ async def run_conversation(
                 conversation_history=conversation_history,
                 stage=_STAGE_ORDER[_STAGE_ORDER.index(stage) + 1].value,
                 turn_index=1,
+                account_facts=account_facts,
             )
             borrower_message = next_borrower
 

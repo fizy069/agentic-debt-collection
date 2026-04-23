@@ -235,7 +235,10 @@ Score each dimension 0.0 to 1.0 with a brief evidence excerpt.
 
 Dimensions:
   1. task_completion — Did each stage accomplish its objective?
-     Assessment: identity verified, debt acknowledged, ability discussed.
+     Assessment: identity verified, debt established and acknowledged,
+       financial situation gathered with specifics (employment, income,
+       reason for default). Assessment does NOT recommend or offer
+       settlement paths — that is Resolution's job.
      Resolution: options presented, borrower position captured.
      Final notice: ultimatum delivered with expiry date.
   2. tone_appropriateness — Is tone correct per stage?

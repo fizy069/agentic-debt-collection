@@ -33,14 +33,16 @@ _ASSESSMENT_TO_RESOLUTION = SummarizationPolicy(
     keep_fields=(
         "identity_confirmed",
         "debt_acknowledged",
-        "ability_to_pay_discussed",
+        "financial_situation_gathered",
     ),
     keep_signals=(
         "identity verification status",
         "debt amount and acknowledgement",
-        "ability to pay or hardship indicators",
+        "employment status and income",
+        "reason for default",
+        "monthly payment capacity",
+        "hardship or stop-contact flags",
         "borrower stance",
-        "stop-contact requests",
     ),
     remove_signals=(
         "greeting pleasantries",
@@ -50,8 +52,9 @@ _ASSESSMENT_TO_RESOLUTION = SummarizationPolicy(
     system_instruction=(
         "Compress the assessment stage into a concise JSON summary for the "
         "resolution agent. Preserve identity status, debt acknowledgement, "
-        "ability-to-pay signals, and any hardship or stop-contact flags. "
-        "Remove pleasantries, repeated questions, and filler."
+        "employment/income details, reason for default, payment capacity, "
+        "and any hardship or stop-contact flags. Remove pleasantries, "
+        "repeated questions, and filler."
     ),
 )
 

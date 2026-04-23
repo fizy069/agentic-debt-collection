@@ -38,6 +38,10 @@ class Scenario(BaseModel):
     persona: BorrowerPersona
     borrower_id: str
     account_reference: str
+    date_of_birth: str = Field(
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+        description="ISO 8601 (YYYY-MM-DD). Used for identity verification.",
+    )
     debt_amount: float = Field(gt=0)
     currency: str = "USD"
     days_past_due: int = Field(ge=1)

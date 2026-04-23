@@ -27,6 +27,7 @@ _SEED_ACCOUNTS: list[AccountRecord] = [
     AccountRecord(
         borrower_id="B-TEST-001",
         account_reference="ACCT-9876",
+        date_of_birth="1985-03-14",
         debt_amount=4500.00,
         currency="USD",
         days_past_due=45,
@@ -35,6 +36,7 @@ _SEED_ACCOUNTS: list[AccountRecord] = [
     AccountRecord(
         borrower_id="B-TEST-002",
         account_reference="ACCT-5432",
+        date_of_birth="1972-11-22",
         debt_amount=12000.00,
         currency="USD",
         days_past_due=90,
@@ -43,6 +45,7 @@ _SEED_ACCOUNTS: list[AccountRecord] = [
     AccountRecord(
         borrower_id="B-TEST-003",
         account_reference="ACCT-1122",
+        date_of_birth="1990-07-08",
         debt_amount=2200.50,
         currency="USD",
         days_past_due=30,
@@ -51,6 +54,7 @@ _SEED_ACCOUNTS: list[AccountRecord] = [
     AccountRecord(
         borrower_id="B-TEST-004",
         account_reference="ACCT-7788",
+        date_of_birth="1968-01-30",
         debt_amount=8750.00,
         currency="USD",
         days_past_due=120,
@@ -59,6 +63,7 @@ _SEED_ACCOUNTS: list[AccountRecord] = [
     AccountRecord(
         borrower_id="B-TEST-005",
         account_reference="ACCT-3344",
+        date_of_birth="1995-09-02",
         debt_amount=950.00,
         currency="USD",
         days_past_due=60,

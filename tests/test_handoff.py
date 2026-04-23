@@ -14,6 +14,7 @@ def _make_borrower(**overrides):
     base = {
         "borrower_id": "b-test-001",
         "account_reference": "acct-1234",
+        "date_of_birth": "1980-01-15",
         "debt_amount": 5000.00,
         "currency": "USD",
         "days_past_due": 60,
@@ -50,7 +51,7 @@ def _make_completed_stages(stages=("assessment",)):
             fields = {
                 "identity_confirmed": True,
                 "debt_acknowledged": True,
-                "ability_to_pay_discussed": True,
+                "financial_situation_gathered": True,
             }
         elif stage == "resolution":
             fields = {
