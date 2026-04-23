@@ -1,0 +1,42 @@
+app/prompts/final_notice.txt
+  bf5851336dc15315 38
+app/models/pipeline.py
+  bf5851336dc15315 27-32,176-180
+app/services/prompt_registry.py
+  bf5851336dc15315 89-101,190-192
+app/services/prompt_assembler.py
+  bf5851336dc15315 101-112,153,185-191,226-227
+app/workflows/borrower_workflow.py
+  bf5851336dc15315 11,139-144,153-155,161,163-170,203,281-298
+app/prompts/assessment.txt
+  bf5851336dc15315 38
+app/prompts/resolution.txt
+  bf5851336dc15315 40
+app/prompts/directives.json
+  bf5851336dc15315 4-5,8-11,13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "5cbbf16f223d5f60e50018f3615c70973454b758",
+  "prompts": {
+    "bf5851336dc15315": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "27c56a14-bbbd-4446-98e3-34b3677383d9",
+        "model": "claude-4.6-opus-max"
+      },
+      "human_author": "fizy069",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1122,
+      "overriden_lines": 18
+    }
+  },
+  "humans": {
+    "h_7f63ecbcbb8eec": {
+      "author": "fizy069"
+    }
+  }
+}
