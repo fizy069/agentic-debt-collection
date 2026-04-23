@@ -35,5 +35,5 @@ You MUST respond with ONLY a JSON object matching this schema (no markdown fence
 Field guidance:
 - "final_notice_acknowledged": true when the borrower acknowledges receiving or understanding the notice.
 - "borrower_response_recorded": true when the borrower gives any substantive response to the final offer.
-- stage_complete: true only when both fields are true and assistant_reply is a definitive closing statement that records the borrower's response. If you ask a follow-up question, it must be false.
+- stage_complete: true only when both fields are true and assistant_reply is a definitive closing statement that records the borrower's response. The closing reply must NOT end with a question mark or invite a reply. If you ask a follow-up question, stage_complete must be false.
 - decision: "final_notice_sent" when stage_complete is true; otherwise "final_notice_follow_up".

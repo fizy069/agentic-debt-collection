@@ -35,4 +35,4 @@ Field guidance:
 - debt_acknowledged: borrower informed of balance and acknowledged/discussed it (post-verification only).
 - financial_situation_gathered: concrete answers on employment, income, and default cause obtained. "I'm struggling" alone does NOT qualify.
 
-stage_complete: true only when all three fields are true and reply is a brief factual summary (no trailing question, no offered resolution).
+stage_complete: true only when all three fields are true and reply is a brief factual summary followed by a handoff bridge (e.g. "A specialist will call you shortly to walk through your options."). The closing reply must NOT end with a question mark, must NOT offer resolution options, and must NOT invite a reply.

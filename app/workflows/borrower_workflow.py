@@ -8,6 +8,7 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 
 from app.models.pipeline import (
+    CLOSING_TURN_SENTINEL,
     STAGE_OPENER_SENTINEL,
     AgentStageOutput,
     BorrowerMessageRequest,
@@ -135,6 +136,12 @@ class BorrowerWorkflow:
         )
         compliance_flags = ComplianceFlags()
 
+        _turn_caps: dict[PipelineStage, int] = {
+            PipelineStage.ASSESSMENT: 5,
+            PipelineStage.RESOLUTION: 3,
+            PipelineStage.FINAL_NOTICE: 2,
+        }
+
         try:
             for stage in stage_order:
                 stage_key = stage.value
@@ -143,18 +150,24 @@ class BorrowerWorkflow:
                 self._status["stage_collected_fields"].setdefault(stage_key, {})
                 self._status["stage_turn_counts"].setdefault(stage_key, 0)
 
+                turn_cap = _turn_caps.get(stage, 3)
+                needs_closing_turn = False
+
                 while True:
                     turn_index = int(self._status["stage_turn_counts"][stage_key]) + 1
                     agent_initiated_opener = (
                         stage_is_agent_initiated(stage) and turn_index == 1
                     )
+                    is_closing_turn = needs_closing_turn
 
-                    if agent_initiated_opener:
-                        # Outbound stage on turn 1: we "place the call" or
-                        # "send the notice", so the agent speaks first. No
-                        # borrower utterance exists yet; feed the activity a
-                        # sentinel message and skip appending any borrower
-                        # turn to the transcript.
+                    if is_closing_turn:
+                        borrower_message = CLOSING_TURN_SENTINEL
+                        message_id = f"{workflow_id}-{stage_key}-closing"
+                        workflow.logger.info(
+                            "closing_turn_invoked  stage=%s  turn=%d",
+                            stage_key, turn_index,
+                        )
+                    elif agent_initiated_opener:
                         borrower_message = STAGE_OPENER_SENTINEL
                         message_id = f"{workflow_id}-{stage_key}-opener"
                         workflow.logger.info(
@@ -187,6 +200,7 @@ class BorrowerWorkflow:
                         turn_index=turn_index,
                         completed_stages=self._completed_stages,
                         compliance_flags=compliance_flags,
+                        closing_turn=is_closing_turn,
                     )
 
                     turn_output_payload = await workflow.execute_activity(
@@ -260,6 +274,25 @@ class BorrowerWorkflow:
                             "stage": stage_key,
                             "collected_fields": turn_output.collected_fields,
                             "transition_reason": turn_output.transition_reason,
+                            "turns": turn_index,
+                        })
+                        break
+
+                    # Cap reached without natural completion — schedule a
+                    # closing turn on the next iteration (hard limit: cap + 1).
+                    if turn_index >= turn_cap and not needs_closing_turn:
+                        needs_closing_turn = True
+                    elif needs_closing_turn:
+                        # Closing turn already ran but stage still not marked
+                        # complete (should not happen; defensive guard).
+                        workflow.logger.warning(
+                            "Closing turn did not complete stage %s — forcing break",
+                            stage_key,
+                        )
+                        self._completed_stages.append({
+                            "stage": stage_key,
+                            "collected_fields": turn_output.collected_fields,
+                            "transition_reason": f"{stage_key}_closing_turn_fallback",
                             "turns": turn_index,
                         })
                         break

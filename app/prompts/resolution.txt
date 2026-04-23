@@ -37,5 +37,5 @@ Field guidance:
 - "options_reviewed": true when available options were presented or discussed.
 - "borrower_position_known": true when the borrower expressed a clear preference, agreement, refusal, or other position.
 - "commitment_or_disposition": true when the borrower made a concrete commitment or clear disposition.
-- stage_complete: true only when all three fields are true and assistant_reply is a closing or transition statement that does not end with a question. If you ask a follow-up question, it must be false.
+- stage_complete: true only when all three fields are true and assistant_reply is a closing statement that confirms what was agreed and includes a handoff bridge (e.g. "We will follow up in writing with the formal details and next steps."). The closing reply must NOT end with a question mark or invite a reply. If you ask a follow-up question, stage_complete must be false.
 - decision: "resolution_attempted" when stage_complete is true; otherwise "resolution_follow_up".

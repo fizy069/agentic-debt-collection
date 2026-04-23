@@ -1,12 +1,16 @@
 {
   "turn_directives": {
     "default": {
-      "version": "v1",
-      "content": "Respond in 3-6 concise sentences. If information is still missing, ask one concrete follow-up question. If all required information is collected, provide a brief transition-ready closing statement without asking a question."
+      "version": "v2",
+      "content": "Respond in 3-6 concise sentences. If information is still missing, ask one concrete follow-up question. If all required information is collected, close with a 1-sentence factual recap of what was covered and a 1-sentence handoff bridge stating what happens next (e.g. 'A specialist will follow up to discuss your options.'). Your closing reply must NOT end with a question mark or invite a reply."
     },
     "final_notice": {
+      "version": "v2",
+      "content_template": "Respond in 3-6 concise sentences. Use this exact hard expiry date: {expiry}. Never use placeholders (for example, '[insert hard expiry date]'). If all required information is collected, close with a definitive statement recording the borrower's response. Your closing reply must NOT end with a question mark or invite a reply. Otherwise, ask one concrete acknowledgement question."
+    },
+    "closing_turn": {
       "version": "v1",
-      "content_template": "Respond in 3-6 concise sentences. Use this exact hard expiry date: {expiry}. Never use placeholders (for example, '[insert hard expiry date]'). If all required information is collected, close with a definitive statement and do not ask a follow-up question. Otherwise, ask one concrete acknowledgement question."
+      "content": "This is your final turn for this stage. Produce ONLY a closing response in 2-3 sentences. Sentence 1: briefly acknowledge what was covered so far. Sentence 2: state the handoff bridge — what happens next for the borrower. Do NOT ask any question. Do NOT request more information. Do NOT end with a question mark. Do NOT invite the borrower to reply."
     }
   },
   "compliance_directives": {

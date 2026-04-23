@@ -12,6 +12,7 @@ from temporalio import activity
 logger = logging.getLogger(__name__)
 
 from app.models.pipeline import (
+    CLOSING_TURN_SENTINEL,
     STAGE_OPENER_SENTINEL,
     AgentChannel,
     BorrowerRequest,
@@ -45,6 +46,7 @@ from app.services.compliance_vector_store import (
 from app.services.handoff import build_handoff_summary
 from app.services.prompt_assembler import (
     _format_recent_transcript,
+    _render_closing_turn_directive,
     _render_compliance_directives,
     _render_turn_directives,
     assemble_agent_prompt,
@@ -81,6 +83,14 @@ def is_opener_turn(borrower_message: str, *, stage: PipelineStage, turn_index: i
     if stage not in (PipelineStage.RESOLUTION, PipelineStage.FINAL_NOTICE):
         return False
     return borrower_message.strip() == STAGE_OPENER_SENTINEL
+
+
+def is_closing_turn(turn_input: StageTurnInput) -> bool:
+    """Return True when the workflow requested a closing turn after hitting the cap."""
+    return (
+        turn_input.closing_turn
+        and turn_input.borrower_message.strip() == CLOSING_TURN_SENTINEL
+    )
 
 
 def _get_anthropic_client() -> AnthropicClient:
@@ -125,12 +135,6 @@ def _prepend_assessment_opening_disclosure(
 
     return f"{_ASSESSMENT_OPENING_DISCLOSURE} {reply}".strip()
 
-
-_TURN_CAPS: dict[PipelineStage, int] = {
-    PipelineStage.ASSESSMENT: 5,
-    PipelineStage.RESOLUTION: 3,
-    PipelineStage.FINAL_NOTICE: 2,
-}
 
 _STAGE_FIELD_KEYS: dict[PipelineStage, list[str]] = {
     PipelineStage.ASSESSMENT: [
@@ -297,14 +301,16 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
         stage=turn_input.stage,
         turn_index=turn_input.turn_index,
     )
+    closing_turn_active = is_closing_turn(turn_input)
+    skip_borrower_checks = opener_turn or closing_turn_active
     logger.info(
-        "stage_turn_start  stage=%s  turn=%d  borrower=%s  opener=%s",
+        "stage_turn_start  stage=%s  turn=%d  borrower=%s  opener=%s  closing=%s",
         turn_input.stage.value, turn_input.turn_index,
-        turn_input.borrower.borrower_id, opener_turn,
+        turn_input.borrower.borrower_id, opener_turn, closing_turn_active,
     )
 
     msg_tokens = count_tokens(turn_input.borrower_message)
-    if not opener_turn and is_borrower_message_oversized(turn_input.borrower_message):
+    if not skip_borrower_checks and is_borrower_message_oversized(turn_input.borrower_message):
         logger.warning(
             "borrower_message_oversized  stage=%s  turn=%d  tokens=%d  "
             "action=hardcoded_reply",
@@ -331,13 +337,13 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
         ).model_dump(mode="json")
 
     # --- Compliance pre-checks on borrower input ---
-    # Skipped entirely on agent-initiated opener turns: there is no real
-    # borrower message to inspect (just the sentinel), so redaction, stop-
+    # Skipped on agent-initiated opener and closing turns: there is no real
+    # borrower message to inspect (just a sentinel), so redaction, stop-
     # contact / abusive / hardship detection all have no signal to act on.
     flags = ComplianceFlags(**turn_input.compliance_flags.model_dump())
     channel, next_stage = _stage_routing(turn_input.stage)
 
-    if opener_turn:
+    if skip_borrower_checks:
         borrower_message = turn_input.borrower_message
     else:
         borrower_message, pii_redacted = redact_pii(turn_input.borrower_message)
@@ -429,6 +435,7 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
         completed_stages=turn_input.completed_stages,
         flags=flags,
         final_notice_expiry=final_notice_expiry,
+        closing_turn=closing_turn_active,
     )
     system_prompt = assembled.system_prompt
     user_prompt = assembled.user_prompt
@@ -514,10 +521,13 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
             turn_meta_lines.append(f"Hard expiry date: {final_notice_expiry}")
         turn_meta_section = "\n".join(turn_meta_lines)
 
-        directives_section = _render_turn_directives(config, final_notice_expiry)
-        compliance_dir = _render_compliance_directives(config)
-        if compliance_dir:
-            directives_section += f" {compliance_dir}"
+        if closing_turn_active:
+            directives_section = _render_closing_turn_directive(config)
+        else:
+            directives_section = _render_turn_directives(config, final_notice_expiry)
+            compliance_dir = _render_compliance_directives(config)
+            if compliance_dir:
+                directives_section += f" {compliance_dir}"
 
         user_prompt = assemble_overflow_user_prompt(
             compressed=compressed,
@@ -562,15 +572,32 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
     transition_reason = parsed.transition_reason
     decision = parsed.decision
 
-    # --- Turn-cap safety net: force completion at the hard limit ---
-    turn_cap = _TURN_CAPS.get(turn_input.stage, 3)
-    if not stage_complete and turn_input.turn_index >= turn_cap:
+    # --- Closing turn: force completion regardless of LLM output ---
+    if closing_turn_active:
         stage_complete = True
-        transition_reason = f"{turn_input.stage.value}_max_turns_reached"
+        transition_reason = f"{turn_input.stage.value}_closing_turn"
         decision = parsed.decision.replace("_follow_up", "_completed")
         logger.info(
-            "turn_cap_override  stage=%s  turn=%d  cap=%d",
-            turn_input.stage.value, turn_input.turn_index, turn_cap,
+            "closing_turn_forced  stage=%s  turn=%d",
+            turn_input.stage.value, turn_input.turn_index,
+        )
+
+    # --- Trailing-question demote: if the LLM declared stage_complete but
+    # the reply ends with a question mark, demote to incomplete so the
+    # workflow can trigger a proper closing turn instead. ---
+    if (
+        stage_complete
+        and not closing_turn_active
+        and assistant_reply.rstrip().endswith("?")
+    ):
+        stage_complete = False
+        transition_reason = "ends_with_question_demote"
+        decision = parsed.decision.replace("_completed", "_follow_up").replace(
+            "_attempted", "_follow_up"
+        ).replace("_sent", "_follow_up")
+        logger.info(
+            "trailing_question_demote  stage=%s  turn=%d",
+            turn_input.stage.value, turn_input.turn_index,
         )
 
     # --- Compliance post-checks on assistant output ---

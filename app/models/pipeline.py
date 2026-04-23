@@ -24,6 +24,12 @@ class PipelineStage(str, Enum):
 # the borrower just said".
 STAGE_OPENER_SENTINEL = "[handoff_open]"
 
+# Sentinel placed in `StageTurnInput.borrower_message` when the workflow
+# forces a closing turn after hitting the turn cap.  There is no real
+# borrower utterance — the activity uses a closing-only sub-prompt to
+# produce a handoff-bridge reply without asking further questions.
+CLOSING_TURN_SENTINEL = "[closing_turn]"
+
 
 def stage_is_agent_initiated(stage: "PipelineStage") -> bool:
     """Return True for stages where the agent speaks first on turn 1.
@@ -167,6 +173,11 @@ class StageTurnInput(BaseModel):
         description="Metadata from prior completed stages for handoff summary building.",
     )
     compliance_flags: ComplianceFlags = Field(default_factory=ComplianceFlags)
+    closing_turn: bool = Field(
+        default=False,
+        description="When True the activity uses a closing-only sub-prompt and "
+        "forces stage_complete=True regardless of LLM output.",
+    )
 
 
 class LLMStageResponse(BaseModel):

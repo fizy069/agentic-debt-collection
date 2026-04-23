@@ -86,6 +86,19 @@ class PromptRegistry:
             ),
         )
 
+        ct = td.get("closing_turn")
+        if ct:
+            self._register(
+                "turn_directives:closing_turn",
+                PromptSection(
+                    name="turn_directives:closing_turn",
+                    content=ct["content"],
+                    version=ct["version"],
+                    stage=None,
+                    section_type="directive",
+                ),
+            )
+
         cd = raw["compliance_directives"]
         self._register(
             "compliance_directives:offer_policy",
@@ -173,6 +186,10 @@ class PromptRegistry:
             sections["allowed_consequences"] = self._sections[
                 "compliance_directives:allowed_consequences"
             ]
+
+        closing_key = "turn_directives:closing_turn"
+        if closing_key in self._sections:
+            sections["closing_turn"] = self._sections[closing_key]
 
         return PromptConfig(stage=stage_val, call_type="agent", sections=sections)
 

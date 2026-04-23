@@ -98,6 +98,18 @@ def _render_turn_directives(
     return template
 
 
+def _render_closing_turn_directive(config: PromptConfig) -> str:
+    """Render the closing_turn directive that replaces normal turn directives."""
+    section = config.sections.get("closing_turn")
+    if section is None:
+        return (
+            "This is your final turn for this stage. Produce ONLY a closing "
+            "response in 2-3 sentences. Do NOT ask any question. Do NOT end "
+            "with a question mark."
+        )
+    return section.content
+
+
 def _render_compliance_directives(config: PromptConfig) -> str:
     """Render offer-policy and allowed-consequences directives."""
     parts: list[str] = []
@@ -138,6 +150,7 @@ def assemble_agent_prompt(
     completed_stages: list[dict[str, Any]],
     flags: ComplianceFlags,
     final_notice_expiry: str | None,
+    closing_turn: bool = False,
 ) -> AssembledPrompt:
     """Assemble the system + user prompt pair for a main agent turn."""
     system_template = config.sections["system_template"]
@@ -169,10 +182,13 @@ def assemble_agent_prompt(
         f"{_format_recent_transcript(transcript)}"
     )
 
-    directives_section = _render_turn_directives(config, final_notice_expiry)
-    compliance_dir = _render_compliance_directives(config)
-    if compliance_dir:
-        directives_section += f" {compliance_dir}"
+    if closing_turn:
+        directives_section = _render_closing_turn_directive(config)
+    else:
+        directives_section = _render_turn_directives(config, final_notice_expiry)
+        compliance_dir = _render_compliance_directives(config)
+        if compliance_dir:
+            directives_section += f" {compliance_dir}"
 
     handoff_section = ""
     if completed_stages:
@@ -207,10 +223,10 @@ def assemble_agent_prompt(
             "directives": count_tokens(directives_section),
         },
     }
+    if closing_turn:
+        metadata["closing_turn"] = True
     if handoff_section:
         metadata["section_tokens"]["handoff"] = count_tokens(handoff_section)
-        # Expose the raw handoff text so the eval harness can audit
-        # continuity / fidelity without reconstructing it from transcripts.
         metadata["handoff_section"] = handoff_section
 
     return AssembledPrompt(
