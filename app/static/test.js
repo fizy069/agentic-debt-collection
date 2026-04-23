@@ -22,6 +22,9 @@ var silenceStart = 0;
 var fillerBlob = null;
 var pendingRealAudio = null;
 var fillerPlaying = false;
+var voiceTurnInFlight = false;
+var agentAudioPlaying = false;
+var pendingStageAdvance = null;
 
 var SPEECH_THRESHOLD = 30;
 var SILENCE_DURATION_MS = 1500;
@@ -137,8 +140,8 @@ async function pollStatus() {
     }
 
     if (inVoiceCall && data.current_stage !== 'resolution') {
-      endCall();
-      addSystemMsg('Resolution call ended - stage advanced to ' + data.current_stage);
+      pendingStageAdvance = data.current_stage;
+      maybeFinishResolutionCall();
     }
 
     if (!inVoiceCall) {
@@ -223,6 +226,9 @@ function declineCall() {
 function endCall() {
   inVoiceCall = false;
   vadActive = false;
+  voiceTurnInFlight = false;
+  agentAudioPlaying = false;
+  pendingStageAdvance = null;
   if (vadFrameId) { cancelAnimationFrame(vadFrameId); vadFrameId = null; }
   stopRecordingSilent();
   if (mediaStream) {
@@ -241,6 +247,16 @@ function endCall() {
   document.getElementById('input-bar').style.display = 'flex';
   document.getElementById('tts-player').pause();
   document.getElementById('volume-bar').style.width = '0%';
+}
+
+function maybeFinishResolutionCall() {
+  if (!pendingStageAdvance || !inVoiceCall) return;
+  if (voiceTurnInFlight || fillerPlaying || agentAudioPlaying) return;
+
+  var nextStage = pendingStageAdvance;
+  pendingStageAdvance = null;
+  endCall();
+  addSystemMsg('Resolution call ended - stage advanced to ' + nextStage);
 }
 
 /* ---- Call status pill ---- */
@@ -297,10 +313,14 @@ function onFillerEnded() {
     pendingRealAudio = null;
     setCallStatus('speaking');
     playRealAudio(real.audio_base64, real.audio_mime);
+    return;
   }
+
+  maybeFinishResolutionCall();
 }
 
 function playRealAudio(b64, mime) {
+  if (!inVoiceCall) return;
   var raw = atob(b64);
   var arr = new Uint8Array(raw.length);
   for (var i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
@@ -309,14 +329,25 @@ function playRealAudio(b64, mime) {
 
   var player = document.getElementById('tts-player');
   player.src = url;
+  agentAudioPlaying = true;
   player.onended = function() {
     URL.revokeObjectURL(url);
+    agentAudioPlaying = false;
+    if (pendingStageAdvance) {
+      maybeFinishResolutionCall();
+      return;
+    }
     if (inVoiceCall) {
       beginListening();
     }
   };
   setCallStatus('speaking');
   player.play().catch(function() {
+    agentAudioPlaying = false;
+    if (pendingStageAdvance) {
+      maybeFinishResolutionCall();
+      return;
+    }
     if (inVoiceCall) beginListening();
   });
 }
@@ -330,11 +361,18 @@ function playAudioAndWait(b64, mime) {
     var url = URL.createObjectURL(blob);
     var player = document.getElementById('tts-player');
     player.src = url;
+    agentAudioPlaying = true;
     player.onended = function() {
       URL.revokeObjectURL(url);
+      agentAudioPlaying = false;
+      maybeFinishResolutionCall();
       resolve();
     };
-    player.play().catch(function() { resolve(); });
+    player.play().catch(function() {
+      agentAudioPlaying = false;
+      maybeFinishResolutionCall();
+      resolve();
+    });
   });
 }
 
@@ -447,6 +485,7 @@ async function onVADRecordingDone() {
 
   var form = new FormData();
   form.append('audio', blob, 'recording.webm');
+  voiceTurnInFlight = true;
 
   try {
     var res = await fetch(API + '/pipelines/' + workflowId + '/voice-turn', {
@@ -459,6 +498,10 @@ async function onVADRecordingDone() {
     }
     var data = await res.json();
 
+    if (!inVoiceCall) {
+      return;
+    }
+
     seenMessageCount += 2;
     addBorrowerMsg(data.transcribed_text);
     addAgentMsg(data.assistant_reply, 'resolution');
@@ -468,6 +511,7 @@ async function onVADRecordingDone() {
     }
 
     if (!data.audio_base64 || !data.audio_mime) {
+      maybeFinishResolutionCall();
       if (inVoiceCall) beginListening();
       return;
     }
@@ -481,6 +525,9 @@ async function onVADRecordingDone() {
   } catch (e) {
     addSystemMsg('Voice turn failed: ' + e.message);
     if (inVoiceCall) beginListening();
+  } finally {
+    voiceTurnInFlight = false;
+    maybeFinishResolutionCall();
   }
 }
 
