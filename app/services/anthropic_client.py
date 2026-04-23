@@ -30,6 +30,18 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
+_ANTHROPIC_DEFAULT_MODEL = "claude-haiku-4-5"
+_OPENAI_DEFAULT_MODEL = "gpt-4o-mini"
+
+
+def _looks_like_anthropic_model(name: str) -> bool:
+    return name.lower().startswith(("claude",))
+
+
+def _looks_like_openai_model(name: str) -> bool:
+    lower = name.lower()
+    return lower.startswith(("gpt-", "gpt_", "o1", "o3", "o4", "chatgpt"))
+
 
 class AnthropicClient:
     """Thin facade that routes ``generate`` / ``summarize`` to the active provider.
@@ -38,6 +50,13 @@ class AnthropicClient:
       1. Anthropic — if ``ANTHROPIC_API_KEY`` is available.
       2. OpenAI   — if ``OPENAI_API_KEY`` is available (temporary).
       3. Stub     — no live key configured.
+
+    Model selection is provider-aware: if the caller (or an env override)
+    passes a model name that clearly belongs to the *other* provider — e.g.
+    ``claude-haiku-4-5`` when only ``OPENAI_API_KEY`` is configured — the
+    client ignores the mismatch and falls back to the active provider's
+    default model.  This prevents the eval harness and judges from hard-
+    coding Anthropic model names that 404 when the OpenAI backend is in use.
     """
 
     def __init__(
@@ -55,13 +74,23 @@ class AnthropicClient:
         if anthropic_key:
             self._provider = "anthropic"
             self._api_key = anthropic_key
-            self._model = model or os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5")
+            self._model = self._resolve_model(
+                requested=model,
+                env_var="ANTHROPIC_MODEL",
+                default=_ANTHROPIC_DEFAULT_MODEL,
+                mismatch_predicate=_looks_like_openai_model,
+            )
             self._anthropic = llm_anthropic.create_client(self._api_key)
             configure_encoding()
         elif openai_key:
             self._provider = "openai"
             self._api_key = openai_key
-            self._model = model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+            self._model = self._resolve_model(
+                requested=model,
+                env_var="OPENAI_MODEL",
+                default=_OPENAI_DEFAULT_MODEL,
+                mismatch_predicate=_looks_like_anthropic_model,
+            )
             self._openai = llm_openai.create_client(self._api_key)
             configure_encoding(self._model)
         else:
@@ -78,10 +107,68 @@ class AnthropicClient:
             (self._api_key or "")[:12] + "..." if self._api_key else "none",
         )
 
+    def _resolve_model(
+        self,
+        *,
+        requested: str | None,
+        env_var: str,
+        default: str,
+        mismatch_predicate,
+    ) -> str:
+        """Pick a sensible model name for the active provider.
+
+        Precedence:
+          1. Caller-supplied ``requested`` model (CLI flag / code).
+          2. ``env_var`` from the environment.
+          3. Hard-coded per-provider default.
+
+        If a candidate clearly belongs to the *other* provider (detected by
+        ``mismatch_predicate``) it is dropped with a warning and the next
+        source is tried.  This keeps the eval harness working when only one
+        provider key is configured but judges/simulators hard-code the other
+        provider's model name.
+        """
+        candidates: list[tuple[str, str | None]] = [
+            ("argument", requested),
+            (f"env:{env_var}", os.getenv(env_var)),
+        ]
+        for source, value in candidates:
+            if not value:
+                continue
+            if mismatch_predicate(value):
+                logger.warning(
+                    "LLMClient model mismatch  provider=%s  source=%s  requested=%s  "
+                    "falling_back_to=%s",
+                    self._provider, source, value, default,
+                )
+                continue
+            return value
+        return default
+
     @property
     def _client(self) -> object | None:
         """Backward-compatible property used by the cached-client check in agents.py."""
         return self._anthropic or self._openai
+
+    @property
+    def model(self) -> str:
+        """Resolved model id for the active provider (e.g. ``claude-haiku-4-5`` or ``gpt-4o-mini``)."""
+        return self._model
+
+    @property
+    def provider(self) -> str:
+        """Active provider: ``anthropic``, ``openai``, or ``stub``."""
+        return self._provider
+
+    @property
+    def model(self) -> str:
+        """Public, read-only view of the resolved model name."""
+        return self._model
+
+    @property
+    def provider(self) -> str:
+        """Public, read-only view of the active provider: ``anthropic`` / ``openai`` / ``stub``."""
+        return self._provider
 
     # ------------------------------------------------------------------
     # Internal dispatch

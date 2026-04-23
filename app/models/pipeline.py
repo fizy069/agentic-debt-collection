@@ -15,6 +15,27 @@ class PipelineStage(str, Enum):
     FAILED = "failed"
 
 
+# Sentinel placed in `StageTurnInput.borrower_message` when the agent
+# initiates the turn (agent-initiated stages like resolution / final_notice
+# on turn 1). These stages are outbound by nature (we call/notify the
+# borrower) so there is no real borrower utterance to feed in. The prompt
+# templates and the activity code both recognise this marker and treat the
+# turn as "open the call / send the notice" rather than "respond to what
+# the borrower just said".
+STAGE_OPENER_SENTINEL = "[handoff_open]"
+
+
+def stage_is_agent_initiated(stage: "PipelineStage") -> bool:
+    """Return True for stages where the agent speaks first on turn 1.
+
+    Assessment is inbound (the borrower contacted us / received a notice
+    and is replying) — the borrower speaks first. Resolution is an
+    outbound collections call, and Final Notice is an outbound written
+    notice — both are agent-initiated.
+    """
+    return stage in (PipelineStage.RESOLUTION, PipelineStage.FINAL_NOTICE)
+
+
 class AgentChannel(str, Enum):
     CHAT = "chat"
     VOICE_STUB = "voice_stub_chat"

@@ -20,6 +20,7 @@ from app.eval.models import (
     TurnRecord,
 )
 from app.models.pipeline import (
+    STAGE_OPENER_SENTINEL,
     BorrowerRequest,
     ComplianceFlags,
     ConversationMessage,
@@ -27,6 +28,7 @@ from app.models.pipeline import (
     PipelineStage,
     StageTurnInput,
     StageTurnOutput,
+    stage_is_agent_initiated,
 )
 from app.activities.agents import _run_stage_turn
 
@@ -92,16 +94,28 @@ async def run_conversation(
             turn_index += 1
             t0 = time.monotonic()
 
-            transcript.append(
-                ConversationMessage(
-                    role=ConversationRole.BORROWER,
-                    stage=stage,
-                    text=borrower_message,
-                    timestamp=datetime.now(timezone.utc).isoformat(),
-                )
+            agent_initiated_opener = (
+                stage_is_agent_initiated(stage) and turn_index == 1
             )
-            conversation_history.append({"role": "borrower", "text": borrower_message})
-            record.all_borrower_messages.append(borrower_message)
+
+            if agent_initiated_opener:
+                # Mirror BorrowerWorkflow semantics: on outbound stages
+                # (resolution / final_notice) the agent speaks first. Feed
+                # the sentinel as borrower_message and do NOT record a
+                # borrower turn in the transcript, conversation history or
+                # the evaluation record.
+                borrower_message = STAGE_OPENER_SENTINEL
+            else:
+                transcript.append(
+                    ConversationMessage(
+                        role=ConversationRole.BORROWER,
+                        stage=stage,
+                        text=borrower_message,
+                        timestamp=datetime.now(timezone.utc).isoformat(),
+                    )
+                )
+                conversation_history.append({"role": "borrower", "text": borrower_message})
+                record.all_borrower_messages.append(borrower_message)
 
             stage_input = StageTurnInput(
                 borrower=borrower,
@@ -147,6 +161,15 @@ async def run_conversation(
             )
             stage_rec.turns.append(turn_rec)
             record.total_turns += 1
+
+            # Attribute the handoff summary (built at the consumer's turn 1)
+            # back onto the prior stage's record. This is the deterministic
+            # JSON produced by `build_handoff_summary` and is what the next
+            # agent actually sees.
+            if turn_index == 1 and record.stages:
+                incoming_handoff = turn_output.metadata.get("handoff_section", "")
+                if incoming_handoff and not record.stages[-1].handoff_summary:
+                    record.stages[-1].handoff_summary = incoming_handoff
 
             if compliance_flags.any_terminal():
                 terminal_reason = (
@@ -195,14 +218,21 @@ async def run_conversation(
         record.stages.append(stage_rec)
 
         if stage != _STAGE_ORDER[-1]:
-            next_borrower = await simulator.generate_reply(
-                persona=scenario.persona,
-                conversation_history=conversation_history,
-                stage=_STAGE_ORDER[_STAGE_ORDER.index(stage) + 1].value,
-                turn_index=1,
-                account_facts=account_facts,
-            )
-            borrower_message = next_borrower
+            next_stage = _STAGE_ORDER[_STAGE_ORDER.index(stage) + 1]
+            if stage_is_agent_initiated(next_stage):
+                # The agent will speak first on the next stage; the sentinel
+                # is substituted inside the loop. No borrower utterance is
+                # needed (or simulated) between stages.
+                borrower_message = STAGE_OPENER_SENTINEL
+            else:
+                next_borrower = await simulator.generate_reply(
+                    persona=scenario.persona,
+                    conversation_history=conversation_history,
+                    stage=next_stage.value,
+                    turn_index=1,
+                    account_facts=account_facts,
+                )
+                borrower_message = next_borrower
 
     record.final_outcome = "final_notice_issued"
     logger.info(

@@ -15,15 +15,21 @@ from app.services.anthropic_client import AnthropicClient
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_SIM_MODEL = "claude-haiku-4-5"
-
 
 class BorrowerSimulator:
-    """Generates borrower messages by prompting an LLM to role-play a persona."""
+    """Generates borrower messages by prompting an LLM to role-play a persona.
+
+    Model selection precedence:
+      1. Explicit ``model`` argument (CLI flag).
+      2. ``EVAL_SIM_MODEL`` environment variable.
+      3. Provider default resolved by :class:`AnthropicClient`
+         (Anthropic -> ``claude-haiku-4-5``; OpenAI -> ``gpt-4o-mini``).
+    """
 
     def __init__(self, model: str | None = None) -> None:
-        self._model = model or os.getenv("EVAL_SIM_MODEL", _DEFAULT_SIM_MODEL)
-        self._client = AnthropicClient(model=self._model)
+        requested = model or os.getenv("EVAL_SIM_MODEL")
+        self._client = AnthropicClient(model=requested)
+        self._model = self._client.model
         self._call_count = 0
 
     @property

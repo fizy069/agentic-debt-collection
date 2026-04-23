@@ -8,6 +8,7 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 
 from app.models.pipeline import (
+    STAGE_OPENER_SENTINEL,
     AgentStageOutput,
     BorrowerMessageRequest,
     BorrowerRequest,
@@ -18,6 +19,7 @@ from app.models.pipeline import (
     PipelineStatus,
     StageTurnInput,
     StageTurnOutput,
+    stage_is_agent_initiated,
 )
 
 
@@ -142,21 +144,36 @@ class BorrowerWorkflow:
                 self._status["stage_turn_counts"].setdefault(stage_key, 0)
 
                 while True:
-                    borrower_turn = await self._wait_and_pop_borrower_message(stage)
-                    borrower_message = borrower_turn["message"]
-                    message_id = borrower_turn.get("message_id")
-
                     turn_index = int(self._status["stage_turn_counts"][stage_key]) + 1
-                    workflow.logger.info(
-                        "Executing turn %d for stage %s", turn_index, stage_key,
+                    agent_initiated_opener = (
+                        stage_is_agent_initiated(stage) and turn_index == 1
                     )
 
-                    self._append_transcript(
-                        role=ConversationRole.BORROWER,
-                        stage=stage,
-                        text=borrower_message,
-                        message_id=message_id,
-                    )
+                    if agent_initiated_opener:
+                        # Outbound stage on turn 1: we "place the call" or
+                        # "send the notice", so the agent speaks first. No
+                        # borrower utterance exists yet; feed the activity a
+                        # sentinel message and skip appending any borrower
+                        # turn to the transcript.
+                        borrower_message = STAGE_OPENER_SENTINEL
+                        message_id = f"{workflow_id}-{stage_key}-opener"
+                        workflow.logger.info(
+                            "Opening stage %s with agent-initiated turn %d",
+                            stage_key, turn_index,
+                        )
+                    else:
+                        borrower_turn = await self._wait_and_pop_borrower_message(stage)
+                        borrower_message = borrower_turn["message"]
+                        message_id = borrower_turn.get("message_id")
+                        workflow.logger.info(
+                            "Executing turn %d for stage %s", turn_index, stage_key,
+                        )
+                        self._append_transcript(
+                            role=ConversationRole.BORROWER,
+                            stage=stage,
+                            text=borrower_message,
+                            message_id=message_id,
+                        )
 
                     stage_input = StageTurnInput(
                         borrower=borrower,

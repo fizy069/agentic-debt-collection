@@ -21,7 +21,7 @@ from app.models.pipeline import (
 from app.models.prompt import AssembledPrompt, PromptConfig
 from app.services.compliance import (
     ALLOWED_CONSEQUENCES,
-    OFFER_POLICY,
+    OFFER_POLICY_BOUNDS,
 )
 from app.services.handoff import build_handoff_summary
 from app.services.token_budget import count_tokens
@@ -104,12 +104,7 @@ def _render_compliance_directives(config: PromptConfig) -> str:
 
     offer_section = config.sections.get("offer_policy")
     if offer_section:
-        parts.append(offer_section.content.format(
-            min_settlement_pct=OFFER_POLICY.min_settlement_pct,
-            max_settlement_pct=OFFER_POLICY.max_settlement_pct,
-            min_plan_months=OFFER_POLICY.min_plan_months,
-            max_plan_months=OFFER_POLICY.max_plan_months,
-        ))
+        parts.append(offer_section.content.format(**OFFER_POLICY_BOUNDS))
 
     consequences_section = config.sections.get("allowed_consequences")
     if consequences_section:
@@ -214,6 +209,9 @@ def assemble_agent_prompt(
     }
     if handoff_section:
         metadata["section_tokens"]["handoff"] = count_tokens(handoff_section)
+        # Expose the raw handoff text so the eval harness can audit
+        # continuity / fidelity without reconstructing it from transcripts.
+        metadata["handoff_section"] = handoff_section
 
     return AssembledPrompt(
         system_prompt=system_prompt,

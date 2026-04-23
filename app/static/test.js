@@ -173,8 +173,16 @@ async function pollStatus() {
     }
 
     if (voiceEnabled && data.current_stage === 'resolution' && !voiceCallShown && !inVoiceCall) {
-      voiceCallShown = true;
-      showIncomingCall();
+      /* Only show the incoming call once Agent 2's opener is in the transcript,
+         otherwise /voice-greeting will 404 and the borrower would end up
+         speaking first. */
+      var hasResolutionOpener = (data.transcript || []).some(function(msg) {
+        return msg.role === 'agent' && msg.stage === 'resolution';
+      });
+      if (hasResolutionOpener) {
+        voiceCallShown = true;
+        showIncomingCall();
+      }
     }
 
     if (inVoiceCall && data.current_stage !== 'resolution') {
@@ -187,7 +195,12 @@ async function pollStatus() {
       while (seenMessageCount < transcript.length) {
         var msg = transcript[seenMessageCount];
         if (msg.role === 'agent') {
-          addAgentMsg(msg.text, msg.stage);
+          /* Resolution messages belong to the voice call; don't leak them
+             into the chat pane while voice is the active modality. */
+          var skipAsVoiceContent = voiceEnabled && msg.stage === 'resolution';
+          if (!skipAsVoiceContent) {
+            addAgentMsg(msg.text, msg.stage);
+          }
         }
         seenMessageCount++;
       }
@@ -242,14 +255,16 @@ async function acceptCall() {
   /* Fetch filler audio in background */
   fetchFillerAudio();
 
-  /* Fetch and play greeting */
+  /* Fetch and play greeting. Render into the chat pane for an audit trail
+     of the call. The poll loop skipped this resolution message intentionally
+     (voice content), so seenMessageCount is already past it — don't bump
+     it again here. */
   try {
     var res = await fetch(API + '/voice-greeting?workflow_id=' + encodeURIComponent(workflowId));
     if (res.ok) {
       var data = await res.json();
       if (data.audio_base64 && data.audio_mime) {
         addAgentMsg(data.assistant_reply, 'resolution');
-        seenMessageCount += 1;
         await playAudioAndWait(data.audio_base64, data.audio_mime);
       }
     }
