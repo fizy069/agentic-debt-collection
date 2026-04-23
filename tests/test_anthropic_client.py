@@ -8,6 +8,7 @@ import pytest
 
 from app.services.anthropic_client import AnthropicClient, AnthropicServiceError, LLMServiceError
 from app.services.llm_types import is_context_overflow_message
+from app.services.token_budget import configure_encoding, get_active_encoding_name
 
 
 class _FakeAPIError(Exception):
@@ -135,6 +136,39 @@ class TestProviderSelection:
     def test_client_property_truthy_for_anthropic(self):
         client = AnthropicClient(api_key="sk-ant-test-key")
         assert client._client is not None
+
+
+# ------------------------------------------------------------------
+# Token encoding configuration
+# ------------------------------------------------------------------
+
+class TestTokenEncodingOnInit:
+    """Verify that provider selection configures the right tiktoken encoding."""
+
+    def teardown_method(self):
+        configure_encoding()
+
+    @patch.dict(
+        "os.environ",
+        {"OPENAI_API_KEY": "sk-test-openai", "OPENAI_MODEL": "gpt-4o"},
+        clear=False,
+    )
+    def test_openai_gpt4o_sets_o200k(self):
+        AnthropicClient(api_key=None)
+        assert get_active_encoding_name() == "o200k_base"
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test-openai"}, clear=False)
+    def test_openai_default_model_sets_o200k(self):
+        AnthropicClient(api_key=None)
+        assert get_active_encoding_name() == "o200k_base"
+
+    def test_anthropic_keeps_default_encoding(self):
+        AnthropicClient(api_key="sk-ant-test-key")
+        assert get_active_encoding_name() == "cl100k_base"
+
+    def test_stub_keeps_default_encoding(self):
+        AnthropicClient(api_key=None)
+        assert get_active_encoding_name() == "cl100k_base"
 
 
 # ------------------------------------------------------------------

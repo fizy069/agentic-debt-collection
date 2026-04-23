@@ -18,6 +18,7 @@ from app.services.llm_types import (
     LLMServiceError,
     is_context_overflow_message,
 )
+from app.services.token_budget import configure_encoding
 
 __all__ = [
     "AnthropicClient",
@@ -56,15 +57,18 @@ class AnthropicClient:
             self._api_key = anthropic_key
             self._model = model or os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5")
             self._anthropic = llm_anthropic.create_client(self._api_key)
+            configure_encoding()
         elif openai_key:
             self._provider = "openai"
             self._api_key = openai_key
             self._model = model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
             self._openai = llm_openai.create_client(self._api_key)
+            configure_encoding(self._model)
         else:
             self._provider = "stub"
             self._api_key = None
             self._model = model or "stub"
+            configure_encoding()
 
         logger.info(
             "LLMClient init  provider=%s  model=%s  key_present=%s  key_prefix=%s",

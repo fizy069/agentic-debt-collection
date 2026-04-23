@@ -10,8 +10,10 @@ from app.services.token_budget import (
     MAX_HANDOFF_TOKENS,
     OVERSIZED_MESSAGE_REPLY,
     ContextBudgetReport,
+    configure_encoding,
     count_tokens,
     enforce_context_budget,
+    get_active_encoding_name,
     is_borrower_message_oversized,
     truncate_to_budget,
 )
@@ -132,6 +134,49 @@ class TestBorrowerMessageGuard:
 
     def test_empty_message_not_oversized(self):
         assert is_borrower_message_oversized("") is False
+
+
+class TestConfigureEncoding:
+    """Verify model-aware tiktoken encoding selection."""
+
+    def teardown_method(self):
+        configure_encoding()
+
+    def test_default_encoding(self):
+        configure_encoding()
+        assert get_active_encoding_name() == "cl100k_base"
+
+    def test_openai_gpt4o_uses_o200k(self):
+        configure_encoding("gpt-4o")
+        assert get_active_encoding_name() == "o200k_base"
+
+    def test_openai_gpt4o_mini_uses_o200k(self):
+        configure_encoding("gpt-4o-mini")
+        assert get_active_encoding_name() == "o200k_base"
+
+    def test_unknown_model_falls_back_to_default(self):
+        configure_encoding("some-unknown-model-xyz")
+        assert get_active_encoding_name() == "cl100k_base"
+
+    def test_none_resets_to_default(self):
+        configure_encoding("gpt-4o")
+        assert get_active_encoding_name() == "o200k_base"
+        configure_encoding(None)
+        assert get_active_encoding_name() == "cl100k_base"
+
+    def test_count_tokens_uses_configured_encoding(self):
+        configure_encoding()
+        default_count = count_tokens("Hello, world! This is a test.")
+        configure_encoding("gpt-4o")
+        o200k_count = count_tokens("Hello, world! This is a test.")
+        assert default_count > 0
+        assert o200k_count > 0
+
+    def test_returns_encoding_name(self):
+        name = configure_encoding("gpt-4o-mini")
+        assert name == "o200k_base"
+        name = configure_encoding()
+        assert name == "cl100k_base"
 
 
 class TestBudgetConstants:
