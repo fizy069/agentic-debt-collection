@@ -20,17 +20,13 @@ from app.models.pipeline import ComplianceFlags
 from app.services.compliance import (
     ABUSIVE_CLOSE_REPLY,
     ALLOWED_CONSEQUENCES,
-    OFFER_POLICY,
     PII_REDACTION_MARKER,
     STOP_CONTACT_REPLY,
-    OfferPolicy,
     allowed_consequences_directive,
     check_false_threats,
-    check_offer_bounds,
     detect_abusive,
     detect_hardship,
     detect_stop_contact,
-    offer_policy_directive,
     redact_pii,
 )
 from app.services.llm_types import LLMResult
@@ -280,6 +276,30 @@ class TestFalseThreats:
         )
         assert not threats
 
+    def test_substring_false_positives_rejected(self):
+        """Regression: substring matching used to flag benign text.
+
+        Before the word-boundary fix, 'issue you' substring-matched
+        'sue you', producing compliance false positives in the eval
+        harness. These must all be clean with the new regex.
+        """
+        benign = [
+            "a billing issue you noticed",
+            "this is a sensitive issue you should address",
+            "reassurance about your account",
+        ]
+        for text in benign:
+            assert not check_false_threats(text), (
+                f"unexpected false positive for {text!r}: "
+                f"{check_false_threats(text)}"
+            )
+
+    def test_verb_stems_still_detected(self):
+        """Regression: we must not lose detection of common inflections."""
+        assert "arrest" in check_false_threats("You could be arrested for this.")
+        assert "jail" in check_false_threats("You will be jailed if unpaid.")
+        assert "sue you" in check_false_threats("We are suing you today.")
+
     def test_allowed_consequences_directive_lists_all(self):
         directive = allowed_consequences_directive()
         for consequence in ALLOWED_CONSEQUENCES:
@@ -296,66 +316,6 @@ class TestFalseThreats:
 
         assert "compliance_false_threats" in result["metadata"]
         assert "arrest" in result["metadata"]["compliance_false_threats"]
-
-
-# ---- Rule 4: Offer bounds -------------------------------------------------
-
-
-class TestOfferBounds:
-    def test_valid_settlement_in_range(self):
-        violations = check_offer_bounds("We can offer a 60% settlement discount.")
-        assert not violations
-
-    def test_settlement_too_low(self):
-        violations = check_offer_bounds("We can settle for 20% of the balance.")
-        assert any("20.0%" in v for v in violations)
-
-    def test_settlement_too_high(self):
-        violations = check_offer_bounds("Settlement at 95% of the balance.")
-        assert any("95.0%" in v for v in violations)
-
-    def test_valid_plan_months(self):
-        violations = check_offer_bounds("Set up a 12-month payment plan.")
-        assert not violations
-
-    def test_plan_too_long(self):
-        violations = check_offer_bounds("We can extend to a 36 month plan.")
-        assert any("36 months" in v for v in violations)
-
-    def test_plan_too_short(self):
-        violations = check_offer_bounds("Pay in 1 month.")
-        assert any("1 month" in v for v in violations)
-
-    def test_custom_policy_bounds(self):
-        custom = OfferPolicy(
-            min_settlement_pct=50, max_settlement_pct=70,
-            min_plan_months=6, max_plan_months=12,
-        )
-        violations = check_offer_bounds("45% settlement over 18 months", custom)
-        assert len(violations) == 2
-
-    def test_offer_policy_directive_contains_bounds(self):
-        directive = offer_policy_directive()
-        assert "40.0%" in directive
-        assert "80.0%" in directive
-        assert "3" in directive
-        assert "24" in directive
-
-    @pytest.mark.asyncio
-    async def test_offer_violations_logged_in_metadata(self):
-        reply_with_bad_offer = "I can offer a 15% settlement payable in 30 months."
-        fake_client = _FakeClient(reply_with_bad_offer)
-        payload = _base_payload(
-            stage="resolution",
-            borrower_message="What are my options?",
-            turn_index=1,
-        )
-
-        with patch("app.activities.agents._get_anthropic_client", return_value=fake_client):
-            result = await _run_stage_turn(payload)
-
-        assert "compliance_offer_violations" in result["metadata"]
-        assert len(result["metadata"]["compliance_offer_violations"]) >= 1
 
 
 # ---- Policy directives injected into resolution/final_notice prompts ------

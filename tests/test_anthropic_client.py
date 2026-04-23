@@ -123,6 +123,58 @@ class TestProviderSelection:
         client = AnthropicClient(api_key=None)
         assert client._model == "gpt-4o-mini"
 
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test-openai"}, clear=False)
+    def test_openai_rejects_claude_model_argument(self):
+        """Regression: judges used to hardcode ``claude-haiku-4-5`` which 404'd
+        when only OpenAI was configured.  The client must now detect the
+        cross-provider mismatch and fall back to the OpenAI default."""
+        client = AnthropicClient(api_key=None, model="claude-haiku-4-5")
+        assert client._provider == "openai"
+        assert client._model == "gpt-4o-mini"
+
+    @patch.dict(
+        "os.environ",
+        {"OPENAI_API_KEY": "sk-test-openai", "OPENAI_MODEL": "gpt-4o"},
+        clear=False,
+    )
+    def test_openai_rejects_claude_model_but_honors_env_override(self):
+        client = AnthropicClient(api_key=None, model="claude-opus-4")
+        assert client._provider == "openai"
+        assert client._model == "gpt-4o"
+
+    @patch.dict(
+        "os.environ",
+        {"OPENAI_API_KEY": "sk-test-openai", "OPENAI_MODEL": "claude-haiku-4-5"},
+        clear=False,
+    )
+    def test_openai_rejects_claude_env_override(self):
+        """``OPENAI_MODEL`` set to a Claude name (common copy/paste mistake)
+        must also be ignored in favour of the OpenAI default."""
+        client = AnthropicClient(api_key=None)
+        assert client._provider == "openai"
+        assert client._model == "gpt-4o-mini"
+
+    def test_anthropic_rejects_openai_model_argument(self):
+        client = AnthropicClient(api_key="sk-ant-test-key", model="gpt-4o-mini")
+        assert client._provider == "anthropic"
+        assert client._model == "claude-haiku-4-5"
+
+    @patch.dict("os.environ", {"ANTHROPIC_MODEL": "gpt-4o"}, clear=False)
+    def test_anthropic_rejects_openai_env_override(self):
+        client = AnthropicClient(api_key="sk-ant-test-key")
+        assert client._provider == "anthropic"
+        assert client._model == "claude-haiku-4-5"
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test-openai"}, clear=False)
+    def test_public_model_property(self):
+        client = AnthropicClient(api_key=None)
+        assert client.model == client._model == "gpt-4o-mini"
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test-openai"}, clear=False)
+    def test_public_provider_property(self):
+        client = AnthropicClient(api_key=None)
+        assert client.provider == "openai"
+
     def test_stub_when_no_keys(self):
         client = AnthropicClient(api_key=None)
         assert client._provider == "stub"

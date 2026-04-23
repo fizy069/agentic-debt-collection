@@ -2,17 +2,20 @@
 
   2. No false threats — only allowed consequences.
   3. Stop-contact — detect, acknowledge, halt pipeline.
-  4. Offers within policy-defined ranges.
   5. Hardship/crisis — detect and flag for routing.
   7. Professional language — detect abusive borrower input.
   8. Privacy — redact sensitive identifiers from inputs and outputs.
+
+Rule 4 (offer bounds) is enforced via prompt directives and the LLM
+compliance judge; a deterministic regex check was removed after it
+produced unacceptable false-positive rates (e.g. "$200 monthly income"
+matched as "200 months").
 """
 
 from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -143,80 +146,15 @@ def detect_abusive(text: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Rule 4 — Offer / policy bounds (externalized)
+# Rule 4 — Offer policy (prompt-side guidance only; deterministic check removed)
 # ---------------------------------------------------------------------------
 
-@dataclass(frozen=True)
-class OfferPolicy:
-    """Concrete numeric bounds for debt-resolution offers."""
-
-    min_settlement_pct: float
-    max_settlement_pct: float
-    min_plan_months: int
-    max_plan_months: int
-
-
-OFFER_POLICY = OfferPolicy(
-    min_settlement_pct=40.0,
-    max_settlement_pct=80.0,
-    min_plan_months=3,
-    max_plan_months=24,
-)
-
-_PERCENTAGE_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*%")
-_MONTH_PATTERN = re.compile(
-    r"(\d+)\s*[-\s]?\s*months?",
-    re.IGNORECASE,
-)
-
-
-def check_offer_bounds(text: str, policy: OfferPolicy = OFFER_POLICY) -> list[str]:
-    """Return list of violation descriptions found in assistant output."""
-    violations: list[str] = []
-
-    for match in _PERCENTAGE_PATTERN.finditer(text):
-        value = float(match.group(1))
-        if value < policy.min_settlement_pct or value > policy.max_settlement_pct:
-            violations.append(
-                f"Settlement percentage {value}% outside allowed range "
-                f"[{policy.min_settlement_pct}%-{policy.max_settlement_pct}%]"
-            )
-
-    for match in _MONTH_PATTERN.finditer(text):
-        months = int(match.group(1))
-        if months < policy.min_plan_months or months > policy.max_plan_months:
-            violations.append(
-                f"Payment plan of {months} months outside allowed range "
-                f"[{policy.min_plan_months}-{policy.max_plan_months} months]"
-            )
-
-    return violations
-
-
-def offer_policy_directive(policy: OfferPolicy = OFFER_POLICY) -> str:
-    """Produce a concrete directive string to inject into the LLM prompt.
-
-    Reads the template from the centralized prompt registry so the
-    self-learning loop can modify the wording without code changes.
-    Falls back to an inline template if the registry is unavailable.
-    """
-    try:
-        from app.services.prompt_registry import get_prompt_registry
-        registry = get_prompt_registry()
-        section = registry.get_section("compliance_directives:offer_policy")
-        return section.content.format(
-            min_settlement_pct=policy.min_settlement_pct,
-            max_settlement_pct=policy.max_settlement_pct,
-            min_plan_months=policy.min_plan_months,
-            max_plan_months=policy.max_plan_months,
-        )
-    except Exception:
-        return (
-            f"Settlement offers must be between {policy.min_settlement_pct}% and "
-            f"{policy.max_settlement_pct}% of the outstanding balance. "
-            f"Payment plans must be between {policy.min_plan_months} and "
-            f"{policy.max_plan_months} months."
-        )
+OFFER_POLICY_BOUNDS = {
+    "min_settlement_pct": 40.0,
+    "max_settlement_pct": 80.0,
+    "min_plan_months": 3,
+    "max_plan_months": 24,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +168,7 @@ ALLOWED_CONSEQUENCES: tuple[str, ...] = (
     "account charge-off",
 )
 
-_FALSE_THREAT_PHRASES = (
+_FALSE_THREAT_PHRASES: tuple[str, ...] = (
     "arrest",
     "jail",
     "prison",
@@ -242,13 +180,31 @@ _FALSE_THREAT_PHRASES = (
     "warrant",
 )
 
+_VERB_STEM_SUFFIX = r"(?:ed|ing|s)?"
+
+_FALSE_THREAT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("arrest",           re.compile(r"\barrest" + _VERB_STEM_SUFFIX + r"\b", re.IGNORECASE)),
+    ("jail",             re.compile(r"\bjail" + _VERB_STEM_SUFFIX + r"\b", re.IGNORECASE)),
+    ("prison",           re.compile(r"\bprison\b", re.IGNORECASE)),
+    ("garnish your wages", re.compile(r"\bgarnish(?:ed|ing|es)?\s+your\s+wages\b", re.IGNORECASE)),
+    ("garnishment",      re.compile(r"\bgarnishments?\b", re.IGNORECASE)),
+    ("sue you",          re.compile(r"\bsu(?:e|ed|ing)\s+you\b", re.IGNORECASE)),
+    ("we will sue",      re.compile(r"\bwe\s+will\s+sue\b", re.IGNORECASE)),
+    ("criminal charges", re.compile(r"\bcriminal\s+charges?\b", re.IGNORECASE)),
+    ("warrant",          re.compile(r"\bwarrants?\b", re.IGNORECASE)),
+)
+
 
 def check_false_threats(text: str) -> list[str]:
-    """Return list of false-threat phrases found in assistant output."""
-    lowered = text.lower()
+    """Return list of false-threat phrases found in assistant output.
+
+    Each phrase is matched as a whole-word token (allowing common verb
+    stems where relevant) so that e.g. "issue you" does not match "sue
+    you", and "reassurance" does not match "assurance".
+    """
     return [
-        phrase for phrase in _FALSE_THREAT_PHRASES
-        if phrase in lowered
+        phrase for phrase, pattern in _FALSE_THREAT_PATTERNS
+        if pattern.search(text)
     ]
 
 

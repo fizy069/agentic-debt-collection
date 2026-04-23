@@ -42,11 +42,19 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--sim-model", type=str, default=None,
-        help="Model for the borrower simulator (default: EVAL_SIM_MODEL env or claude-haiku-4-5).",
+        help=(
+            "Model for the borrower simulator.  "
+            "Default: EVAL_SIM_MODEL env, then the active provider's default "
+            "(claude-haiku-4-5 for Anthropic, gpt-4o-mini for OpenAI)."
+        ),
     )
     parser.add_argument(
         "--judge-model", type=str, default=None,
-        help="Model for the judges (default: EVAL_JUDGE_MODEL env or claude-haiku-4-5).",
+        help=(
+            "Model for the judges.  "
+            "Default: EVAL_JUDGE_MODEL env, then the active provider's default "
+            "(claude-haiku-4-5 for Anthropic, gpt-4o-mini for OpenAI)."
+        ),
     )
     parser.add_argument(
         "--output", type=str, default="data/eval_results",

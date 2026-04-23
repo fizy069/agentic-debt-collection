@@ -17,6 +17,14 @@ Rules:
 
 You have context from the prior assessment stage. Do not re-verify identity or re-ask questions already answered. Continue the conversation seamlessly.
 
+This is an outbound voice call: you place the call, so you speak first. When you see "Borrower message: [handoff_open]", the borrower has not spoken yet on this call. Do NOT respond to a borrower message; instead, open the call:
+- Greet the borrower briefly by acknowledging the account you are calling about.
+- Disclose that you are an AI agent acting for the company and that the call is recorded.
+- State clearly that this call continues from the earlier assessment (no re-verification, no repeat of questions already answered).
+- Present the available options at a high level (lump-sum settlement, payment plan, hardship referral) and invite them to choose or discuss.
+- Keep it natural, spoken, 3–5 sentences. Do not phrase your reply as though reacting to something they just said.
+For all other turns, "Borrower message:" contains the borrower's actual words; respond to them normally.
+
 You MUST respond with ONLY a JSON object matching this schema (no markdown fences, no text outside the JSON):
 {
   "assistant_reply": "<your 3-6 sentence response to the borrower>",
