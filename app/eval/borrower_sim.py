@@ -9,9 +9,13 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import TYPE_CHECKING
 
 from app.eval.models import BorrowerPersona
 from app.services.anthropic_client import AnthropicClient
+
+if TYPE_CHECKING:
+    from app.eval.cost_ledger import CostLedger
 
 logger = logging.getLogger(__name__)
 
@@ -26,11 +30,16 @@ class BorrowerSimulator:
          (Anthropic -> ``claude-haiku-4-5``; OpenAI -> ``gpt-4o-mini``).
     """
 
-    def __init__(self, model: str | None = None) -> None:
+    def __init__(
+        self,
+        model: str | None = None,
+        ledger: CostLedger | None = None,
+    ) -> None:
         requested = model or os.getenv("EVAL_SIM_MODEL")
         self._client = AnthropicClient(model=requested)
         self._model = self._client.model
         self._call_count = 0
+        self._ledger = ledger
 
     @property
     def call_count(self) -> int:
@@ -85,12 +94,23 @@ class BorrowerSimulator:
             "that you are an AI."
         )
 
+        if self._ledger is not None:
+            self._ledger.check_budget_or_raise()
+
         result = await self._client.generate(
             system_prompt=persona.system_prompt,
             user_prompt=user_prompt,
             max_tokens=150,
         )
         self._call_count += 1
+
+        if self._ledger is not None:
+            self._ledger.record(
+                role="sim",
+                model=result.model,
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+            )
 
         reply = result.text.strip()
         if reply.startswith('"') and reply.endswith('"'):

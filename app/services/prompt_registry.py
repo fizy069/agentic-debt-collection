@@ -13,10 +13,13 @@ import copy
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.models.pipeline import PipelineStage
 from app.models.prompt import PromptConfig, PromptSection
+
+if TYPE_CHECKING:
+    from app.eval.audit_trail import AuditTrail
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +35,10 @@ _PROMPT_FILES: dict[str, str] = {
 class PromptRegistry:
     """Owns all prompt sections and their version history."""
 
-    def __init__(self) -> None:
+    def __init__(self, audit_trail: AuditTrail | None = None) -> None:
         self._sections: dict[str, PromptSection] = {}
         self._history: dict[str, list[PromptSection]] = {}
+        self._audit: AuditTrail | None = audit_trail
         self._load_system_templates()
         self._load_directives()
 
@@ -128,6 +132,19 @@ class PromptRegistry:
             ),
         )
 
+        ps = raw.get("proposer_system")
+        if ps:
+            self._register(
+                "proposer_system",
+                PromptSection(
+                    name="proposer_system",
+                    content=ps["content"],
+                    version=ps["version"],
+                    stage=None,
+                    section_type="system",
+                ),
+            )
+
     def _register(self, key: str, section: PromptSection) -> None:
         self._sections[key] = section
         self._history.setdefault(key, []).append(section)
@@ -202,10 +219,21 @@ class PromptRegistry:
             "prompt_override  key=%s  old_version=%s  new_version=%s",
             key, old.version, new_version,
         )
+        if self._audit is not None:
+            self._audit.snapshot_section(updated)
+            self._audit.append_event(
+                "override",
+                section_key=key,
+                old_version=old.version,
+                new_version=new_version,
+            )
         return updated
 
     def rollback(self, key: str, target_version: str) -> PromptSection:
         """Restore a section to a specific historical version."""
+        current = self._sections.get(key)
+        old_version = current.version if current else None
+
         for entry in reversed(self._history.get(key, [])):
             if entry.version == target_version:
                 self._sections[key] = entry
@@ -213,6 +241,13 @@ class PromptRegistry:
                     "prompt_rollback  key=%s  restored_version=%s",
                     key, target_version,
                 )
+                if self._audit is not None:
+                    self._audit.append_event(
+                        "rollback",
+                        section_key=key,
+                        old_version=old_version,
+                        new_version=target_version,
+                    )
                 return entry
         raise ValueError(
             f"Version {target_version!r} not found in history for {key!r}"
@@ -245,6 +280,14 @@ class PromptRegistry:
     def all_section_keys(self) -> list[str]:
         return list(self._sections.keys())
 
+    def clone(self, audit_trail: AuditTrail | None = None) -> PromptRegistry:
+        """Deep-copy this registry for A/B comparison without mutating the original."""
+        cloned = PromptRegistry.__new__(PromptRegistry)
+        cloned._sections = copy.deepcopy(self._sections)
+        cloned._history = copy.deepcopy(self._history)
+        cloned._audit = audit_trail
+        return cloned
+
 
 # ------------------------------------------------------------------
 # Module-level singleton
@@ -253,11 +296,13 @@ class PromptRegistry:
 _registry: PromptRegistry | None = None
 
 
-def get_prompt_registry() -> PromptRegistry:
+def get_prompt_registry(
+    audit_trail: AuditTrail | None = None,
+) -> PromptRegistry:
     """Return (and lazily create) the global prompt registry."""
     global _registry
     if _registry is None:
-        _registry = PromptRegistry()
+        _registry = PromptRegistry(audit_trail=audit_trail)
     return _registry
 
 

@@ -2,16 +2,18 @@
 
 Ties together scenario generation, conversation simulation, judging,
 metric computation, and statistics into a single ``run`` entry point.
-Tracks LLM call counts for cost reporting.
+Tracks real token-level cost via ``CostLedger``.
 """
 
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any
 
 from app.eval.borrower_sim import BorrowerSimulator
 from app.eval.conversation_runner import run_conversation
+from app.eval.cost_ledger import CostLedger
 from app.eval.judges import (
     ComplianceJudge,
     HandoffJudge,
@@ -35,12 +37,17 @@ logger = logging.getLogger(__name__)
 class EvalHarness:
     """Main orchestrator for a full evaluation run."""
 
-    def __init__(self, config: EvalConfig) -> None:
+    def __init__(
+        self,
+        config: EvalConfig,
+        ledger: CostLedger | None = None,
+    ) -> None:
         self.config = config
-        self._simulator = BorrowerSimulator(model=config.sim_model)
-        self._compliance = ComplianceJudge(model=config.judge_model)
-        self._quality = QualityJudge(model=config.judge_model)
-        self._handoff = HandoffJudge(model=config.judge_model)
+        self._ledger = ledger or CostLedger(run_id=uuid.uuid4().hex[:12])
+        self._simulator = BorrowerSimulator(model=config.sim_model, ledger=self._ledger)
+        self._compliance = ComplianceJudge(model=config.judge_model, ledger=self._ledger)
+        self._quality = QualityJudge(model=config.judge_model, ledger=self._ledger)
+        self._handoff = HandoffJudge(model=config.judge_model, ledger=self._ledger)
 
     async def run(self) -> EvalRunResult:
         """Execute the full evaluation pipeline.
@@ -117,20 +124,16 @@ class EvalHarness:
         return result
 
     def _build_cost_report(self) -> CostReport:
-        sim_calls = self._simulator.call_count
-        judge_calls = (
-            self._compliance.call_count
-            + self._quality.call_count
-            + self._handoff.call_count
-        )
-        total = sim_calls + judge_calls
-        # Rough estimate: ~$0.001 per haiku call (input+output avg)
-        estimated_cost = total * 0.001
+        calls_by_role = self._ledger.calls_by_role()
+        cost_by_role = self._ledger.cost_by_role()
 
         return CostReport(
-            simulation_calls=sim_calls,
-            evaluation_calls=judge_calls,
-            prompt_generation_calls=0,
-            total_calls=total,
-            estimated_cost_usd=round(estimated_cost, 4),
+            simulation_calls=calls_by_role.get("sim", 0),
+            evaluation_calls=calls_by_role.get("judge", 0),
+            prompt_generation_calls=calls_by_role.get("proposer", 0),
+            total_calls=self._ledger.total_calls,
+            input_tokens=self._ledger.total_input_tokens,
+            output_tokens=self._ledger.total_output_tokens,
+            by_role=cost_by_role,
+            estimated_cost_usd=round(self._ledger.total_cost_usd, 6),
         )

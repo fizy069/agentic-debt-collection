@@ -15,7 +15,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.eval.models import ConversationRecord, ConversationScores, JudgeScore
 from app.services.anthropic_client import AnthropicClient
@@ -25,6 +25,9 @@ from app.services.compliance import (
     detect_stop_contact,
     redact_pii,
 )
+
+if TYPE_CHECKING:
+    from app.eval.cost_ledger import CostLedger
 
 
 @dataclass(frozen=True)
@@ -232,15 +235,23 @@ Schema:
 class ComplianceJudge:
     """Evaluates a conversation against the 8 hard compliance rules."""
 
-    def __init__(self, model: str | None = None) -> None:
+    def __init__(
+        self,
+        model: str | None = None,
+        ledger: CostLedger | None = None,
+    ) -> None:
         self._client = _get_judge_client(model)
         self._call_count = 0
+        self._ledger = ledger
 
     @property
     def call_count(self) -> int:
         return self._call_count
 
     async def evaluate(self, record: ConversationRecord) -> list[JudgeScore]:
+        if self._ledger is not None:
+            self._ledger.check_budget_or_raise()
+
         transcript_text = _format_conversation(record)
         user_prompt = (
             f"Persona: {record.scenario.persona.persona_type.value}\n"
@@ -257,6 +268,13 @@ class ComplianceJudge:
                 max_tokens=1500,
             )
             self._call_count += 1
+            if self._ledger is not None:
+                self._ledger.record(
+                    role="judge",
+                    model=result.model,
+                    input_tokens=result.input_tokens,
+                    output_tokens=result.output_tokens,
+                )
             raw_scores = _safe_parse_scores(result.text)
             for item in raw_scores:
                 scores.append(JudgeScore(
@@ -530,15 +548,23 @@ Schema:
 class QualityJudge:
     """Evaluates per-agent quality: task completion, tone, conciseness."""
 
-    def __init__(self, model: str | None = None) -> None:
+    def __init__(
+        self,
+        model: str | None = None,
+        ledger: CostLedger | None = None,
+    ) -> None:
         self._client = _get_judge_client(model)
         self._call_count = 0
+        self._ledger = ledger
 
     @property
     def call_count(self) -> int:
         return self._call_count
 
     async def evaluate(self, record: ConversationRecord) -> list[JudgeScore]:
+        if self._ledger is not None:
+            self._ledger.check_budget_or_raise()
+
         transcript_text = _format_conversation(record)
         user_prompt = (
             f"Persona: {record.scenario.persona.persona_type.value}\n"
@@ -554,6 +580,13 @@ class QualityJudge:
                 max_tokens=1000,
             )
             self._call_count += 1
+            if self._ledger is not None:
+                self._ledger.record(
+                    role="judge",
+                    model=result.model,
+                    input_tokens=result.input_tokens,
+                    output_tokens=result.output_tokens,
+                )
             raw_scores = _safe_parse_scores(result.text)
             return [
                 JudgeScore(
@@ -609,9 +642,14 @@ Schema:
 class HandoffJudge:
     """Evaluates cross-stage continuity and handoff summary quality."""
 
-    def __init__(self, model: str | None = None) -> None:
+    def __init__(
+        self,
+        model: str | None = None,
+        ledger: CostLedger | None = None,
+    ) -> None:
         self._client = _get_judge_client(model)
         self._call_count = 0
+        self._ledger = ledger
 
     @property
     def call_count(self) -> int:
@@ -627,6 +665,9 @@ class HandoffJudge:
                 for dim in ("context_preservation", "summarization_fidelity",
                             "seamless_experience")
             ]
+
+        if self._ledger is not None:
+            self._ledger.check_budget_or_raise()
 
         transcript_text = _format_conversation(record)
         handoff_summaries = "\n".join(
@@ -648,6 +689,13 @@ class HandoffJudge:
                 max_tokens=1000,
             )
             self._call_count += 1
+            if self._ledger is not None:
+                self._ledger.record(
+                    role="judge",
+                    model=result.model,
+                    input_tokens=result.input_tokens,
+                    output_tokens=result.output_tokens,
+                )
             raw_scores = _safe_parse_scores(result.text)
             return [
                 JudgeScore(
