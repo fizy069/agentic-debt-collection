@@ -179,10 +179,23 @@ def _parse_stage_response(
         )
 
 
-def _borrower_snapshot_for_overflow(borrower: BorrowerRequest) -> str:
+def _borrower_snapshot_for_overflow(
+    borrower: BorrowerRequest,
+    *,
+    identity_confirmed: bool = False,
+    stage: PipelineStage | None = None,
+) -> str:
     """Rebuild borrower snapshot for overflow compression input."""
+    pre_verification = stage == PipelineStage.ASSESSMENT and not identity_confirmed
     masked_reference = borrower.account_reference[-4:]
+
+    if pre_verification:
+        header = "SYSTEM ACCOUNT RECORD (UNVERIFIED):"
+    else:
+        header = "VERIFIED BORROWER ACCOUNT:"
+
     return (
+        f"{header}\n"
         f"Borrower ID: {borrower.borrower_id}\n"
         f"Account Ref (last4): {masked_reference}\n"
         f"Debt: {borrower.debt_amount:.2f} {borrower.currency}\n"
@@ -419,7 +432,10 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
         reserved = directives_tokens + turn_meta_tokens
         compressible_budget = max(50, available - reserved)
 
-        snapshot_section = f"Borrower snapshot:\n{_borrower_snapshot_for_overflow(turn_input.borrower)}"
+        snapshot_section = (
+            f"Borrower snapshot:\n"
+            f"{_borrower_snapshot_for_overflow(turn_input.borrower, identity_confirmed=prior_fields.get('identity_confirmed', False), stage=turn_input.stage)}"
+        )
         transcript_section = (
             "Recent transcript:\n"
             f"{_format_recent_transcript(turn_input.transcript)}"

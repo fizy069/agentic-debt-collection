@@ -47,6 +47,31 @@ async function fetchConfig() {
   }
 }
 
+async function loadAccounts() {
+  var sel = document.getElementById('f-bid');
+  try {
+    var res = await fetch(API + '/accounts');
+    if (res.ok) {
+      var data = await res.json();
+      var ids = data.borrower_ids || [];
+      sel.innerHTML = '';
+      for (var i = 0; i < ids.length; i++) {
+        var opt = document.createElement('option');
+        opt.value = ids[i];
+        opt.textContent = ids[i];
+        sel.appendChild(opt);
+      }
+      if (ids.length === 0) {
+        sel.innerHTML = '<option value="">No accounts available</option>';
+      }
+    }
+  } catch (_) {
+    sel.innerHTML = '<option value="">Could not load accounts</option>';
+  }
+}
+
+loadAccounts();
+
 function applyMetadataVisibility() {
   document.body.classList.toggle('metadata-hidden', !showInternalMetadata);
 }
@@ -65,13 +90,8 @@ async function startPipeline() {
   await fetchConfig();
 
   var body = {
-    borrower: {
-      borrower_id: document.getElementById('f-bid').value,
-      account_reference: document.getElementById('f-acct').value,
-      debt_amount: parseFloat(document.getElementById('f-debt').value),
-      days_past_due: parseInt(document.getElementById('f-dpd').value),
-      borrower_message: document.getElementById('f-msg').value,
-    }
+    borrower_id: document.getElementById('f-bid').value,
+    borrower_message: document.getElementById('f-msg').value,
   };
 
   try {
@@ -95,7 +115,7 @@ async function startPipeline() {
 
     addSystemMsg(showInternalMetadata ? ('Conversation started. Workflow: ' + workflowId) : 'Conversation started.');
     if (voiceEnabled) addSystemMsg(showInternalMetadata ? 'Voice mode enabled for resolution stage.' : 'Voice mode is available when needed.');
-    addBorrowerMsg(body.borrower.borrower_message);
+    addBorrowerMsg(body.borrower_message);
 
     seenMessageCount = 0;
     voiceCallShown = false;

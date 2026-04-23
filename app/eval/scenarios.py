@@ -5,7 +5,9 @@ persona carries an LLM system prompt that instructs the borrower-simulator
 to play that role during simulated conversations.
 
 ``build_scenario_batch`` produces a deterministic set of scenarios for a
-given seed so that evaluation runs are fully reproducible.
+given seed so that evaluation runs are fully reproducible.  Each scenario
+seeds the :class:`~app.services.account_store.InMemoryAccountStore` so
+that the pipeline can look up account data the same way production does.
 """
 
 from __future__ import annotations
@@ -14,6 +16,8 @@ import random
 from typing import Sequence
 
 from app.eval.models import BorrowerPersona, PersonaType, Scenario
+from app.models.pipeline import AccountRecord
+from app.services.account_store import get_account_store
 
 # ------------------------------------------------------------------
 # Persona definitions
@@ -147,6 +151,9 @@ def build_scenario_batch(
 ) -> list[Scenario]:
     """Generate a reproducible batch of evaluation scenarios.
 
+    Each scenario also seeds the :func:`get_account_store` so that
+    ``_run_stage_turn`` can look up the account the same way production does.
+
     Args:
         seed: RNG seed for deterministic generation.
         n_per_persona: Number of scenarios to create per persona type.
@@ -158,23 +165,38 @@ def build_scenario_batch(
     rng = random.Random(seed)
     types = list(persona_types or PersonaType)
     scenarios: list[Scenario] = []
+    store = get_account_store()
 
     for ptype in types:
         persona = PERSONAS[ptype]
         for i in range(n_per_persona):
             profile = _BORROWER_PROFILES[rng.randint(0, len(_BORROWER_PROFILES) - 1)]
             borrower_id = f"eval-{ptype.value}-{i:02d}"
+            account_reference = f"ACCT{rng.randint(100000, 999999)}"
+            debt_amount = float(profile["debt_amount"])
+            days_past_due = int(profile["days_past_due"])
+            notes = str(profile.get("notes", ""))
+
+            store.put(AccountRecord(
+                borrower_id=borrower_id,
+                account_reference=account_reference,
+                debt_amount=debt_amount,
+                currency="USD",
+                days_past_due=days_past_due,
+                notes=notes,
+            ))
+
             scenarios.append(
                 Scenario(
                     scenario_id=f"{ptype.value}-{seed}-{i:02d}",
                     persona=persona,
                     borrower_id=borrower_id,
-                    account_reference=f"ACCT{rng.randint(100000, 999999)}",
-                    debt_amount=float(profile["debt_amount"]),
+                    account_reference=account_reference,
+                    debt_amount=debt_amount,
                     currency="USD",
-                    days_past_due=int(profile["days_past_due"]),
+                    days_past_due=days_past_due,
                     borrower_message=_INITIAL_MESSAGES[ptype],
-                    notes=str(profile.get("notes", "")),
+                    notes=notes,
                     seed=seed,
                 )
             )

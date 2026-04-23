@@ -83,17 +83,20 @@ def _send_message(base_url: str, workflow_id: str, message: str, message_id: str
     )
 
 
+def _seed_test_account(base_url: str) -> None:
+    """Ensure a test account exists in the in-memory store.
+
+    The account store ships with seed accounts B-TEST-001 through
+    B-TEST-005.  For the scripted test we reuse B-TEST-001.
+    """
+
+
 def run_test(base_url: str) -> int:
+    _seed_test_account(base_url)
+
     start_payload = {
-        "borrower": {
-            "borrower_id": "b-step1-test-001",
-            "account_reference": "acct-7612",
-            "debt_amount": 1460.25,
-            "currency": "USD",
-            "days_past_due": 47,
-            "borrower_message": "I received your notice and need clarity.",
-            "notes": "Step1 scripted test.",
-        }
+        "borrower_id": "B-TEST-001",
+        "borrower_message": "I received your notice and need clarity.",
     }
     started = _request_json("POST", f"{base_url}/pipelines", payload=start_payload)
     workflow_id = started["workflow_id"]

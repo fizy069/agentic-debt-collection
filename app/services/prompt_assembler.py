@@ -33,9 +33,29 @@ logger = logging.getLogger(__name__)
 # Shared formatters (pure functions, no LLM calls)
 # ------------------------------------------------------------------
 
-def _borrower_snapshot(borrower: BorrowerRequest) -> str:
+def _borrower_snapshot(
+    borrower: BorrowerRequest,
+    *,
+    identity_confirmed: bool = False,
+    stage: PipelineStage | None = None,
+) -> str:
+    """Build the snapshot injected into agent prompts.
+
+    During the assessment stage, account details are labelled as
+    system-internal until the borrower's identity has been verified.
+    Post-assessment (or once identity is confirmed), the snapshot is
+    presented as verified.
+    """
+    pre_verification = stage == PipelineStage.ASSESSMENT and not identity_confirmed
     masked_reference = borrower.account_reference[-4:]
+
+    if pre_verification:
+        header = "SYSTEM ACCOUNT RECORD (UNVERIFIED — do NOT disclose to caller until identity is confirmed):"
+    else:
+        header = "VERIFIED BORROWER ACCOUNT:"
+
     return (
+        f"{header}\n"
         f"Borrower ID: {borrower.borrower_id}\n"
         f"Account Ref (last4): {masked_reference}\n"
         f"Debt: {borrower.debt_amount:.2f} {borrower.currency}\n"
@@ -127,7 +147,11 @@ def assemble_agent_prompt(
     system_template = config.sections["system_template"]
     system_prompt = system_template.content
 
-    snapshot_section = f"Borrower snapshot:\n{_borrower_snapshot(borrower)}"
+    identity_confirmed = prior_fields.get("identity_confirmed", False)
+    snapshot_section = (
+        f"Borrower snapshot:\n"
+        f"{_borrower_snapshot(borrower, identity_confirmed=identity_confirmed, stage=stage)}"
+    )
 
     turn_meta_lines = [
         f"Current stage: {stage.value}",

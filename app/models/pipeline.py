@@ -25,7 +25,24 @@ class ConversationRole(str, Enum):
     AGENT = "agent"
 
 
+class AccountRecord(BaseModel):
+    """System-side account data — sourced from CRM/database, not from the borrower."""
+
+    borrower_id: str = Field(min_length=3, max_length=64)
+    account_reference: str = Field(
+        min_length=3,
+        max_length=32,
+        description="Internal account ref only, not full sensitive identifiers.",
+    )
+    debt_amount: float = Field(gt=0)
+    currency: str = Field(default="USD", min_length=3, max_length=3)
+    days_past_due: int = Field(ge=1)
+    notes: str | None = Field(default=None, max_length=800)
+
+
 class BorrowerRequest(BaseModel):
+    """Combined view passed through the pipeline (account data + conversation context)."""
+
     borrower_id: str = Field(min_length=3, max_length=64)
     account_reference: str = Field(
         min_length=3,
@@ -43,9 +60,33 @@ class BorrowerRequest(BaseModel):
     )
     notes: str | None = Field(default=None, max_length=800)
 
+    @classmethod
+    def from_account(
+        cls,
+        account: AccountRecord,
+        borrower_message: str = "I received a notice and want to understand my options.",
+    ) -> BorrowerRequest:
+        return cls(
+            borrower_id=account.borrower_id,
+            account_reference=account.account_reference,
+            debt_amount=account.debt_amount,
+            currency=account.currency,
+            days_past_due=account.days_past_due,
+            borrower_message=borrower_message,
+            notes=account.notes,
+        )
+
 
 class PipelineStartRequest(BaseModel):
-    borrower: BorrowerRequest
+    borrower_id: str = Field(
+        min_length=3,
+        max_length=64,
+        description="Looked up against the account store to retrieve system-side data.",
+    )
+    borrower_message: str = Field(
+        default="I received a notice and want to understand my options.",
+        max_length=500,
+    )
     workflow_id: str | None = Field(
         default=None,
         description="Optional explicit workflow ID. If omitted, API generates one.",
