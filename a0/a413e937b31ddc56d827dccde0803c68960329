@@ -1,0 +1,37 @@
+app/services/account_store.py
+  f21e9d995d3bf4d0 1-96
+app/main.py
+  f21e9d995d3bf4d0 22,27,106-112,123-132,134,139
+scripts/test_step1_multiturn.py
+  f21e9d995d3bf4d0 86-93,95-96,98-99
+app/static/test.html
+  f21e9d995d3bf4d0 21
+app/static/test.js
+  f21e9d995d3bf4d0 50-74,93-94,118
+app/eval/scenarios.py
+  f21e9d995d3bf4d0 8-10,19-20
+app/models/pipeline.py
+  f21e9d995d3bf4d0 28-42
+app/prompts/assessment.txt
+  f21e9d995d3bf4d0 5-6,8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "a0a413e937b31ddc56d827dccde0803c68960329",
+  "prompts": {
+    "f21e9d995d3bf4d0": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "2990b1d4-485f-4d06-9a6d-25712f286b7b",
+        "model": "claude-opus-4-7-max"
+      },
+      "human_author": "fizy069",
+      "messages": [],
+      "total_additions": 432,
+      "total_deletions": 155,
+      "accepted_lines": 3727,
+      "overriden_lines": 0
+    }
+  }
+}
