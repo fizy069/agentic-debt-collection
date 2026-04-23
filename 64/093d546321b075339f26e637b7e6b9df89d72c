@@ -1,0 +1,60 @@
+app/eval/rollback.py
+  bfc9b96cf9e71ac9 8-76
+app/eval/harness.py
+  bfc9b96cf9e71ac9 5,11,16,40-44,46-50,127-128,131-138
+.gitignore
+  h_7f63ecbcbb8eec 48
+app/eval/ab_harness.py
+  bfc9b96cf9e71ac9 8-170
+app/eval/borrower_sim.py
+  bfc9b96cf9e71ac9 12,17-19,33-37,42,97-99,107-113
+app/eval/run_self_learn.py
+  bfc9b96cf9e71ac9 10-180
+app/eval/proposer.py
+  bfc9b96cf9e71ac9 9-168
+app/eval/self_learn.py
+  bfc9b96cf9e71ac9 8-297
+app/prompts/directives.json
+  bfc9b96cf9e71ac9 29-32
+tests/test_self_learn.py
+  bfc9b96cf9e71ac9 5-428
+app/services/llm_openai.py
+  bfc9b96cf9e71ac9 89-98
+app/eval/failure_miner.py
+  bfc9b96cf9e71ac9 3-140
+app/services/prompt_registry.py
+  bfc9b96cf9e71ac9 16,21-23,38,41,135-147,222-229,234-236,244-250,283-290,299-301,305
+app/services/llm_anthropic.py
+  bfc9b96cf9e71ac9 119-127
+app/eval/audit_trail.py
+  bfc9b96cf9e71ac9 10-159
+app/eval/models.py
+  bfc9b96cf9e71ac9 139-141
+app/eval/cost_ledger.py
+  bfc9b96cf9e71ac9 10-162
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "64093d546321b075339f26e637b7e6b9df89d72c",
+  "prompts": {
+    "bfc9b96cf9e71ac9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "265371e8-6651-4023-95d3-12b59e6e7685",
+        "model": "claude-4.6-opus-max"
+      },
+      "human_author": "fizy069",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 2057,
+      "overriden_lines": 31
+    }
+  },
+  "humans": {
+    "h_7f63ecbcbb8eec": {
+      "author": "fizy069"
+    }
+  }
+}
