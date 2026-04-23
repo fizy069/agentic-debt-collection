@@ -9,8 +9,8 @@
 <body>
 
 <header>
-  <h1>Debt Collection Pipeline - Test Console</h1>
-  <span id="stage-badge" class="badge badge-stage" style="display:none"></span>
+  <h1>Debt Collection Assistant</h1>
+  <span id="stage-badge" class="badge badge-stage metadata-only" style="display:none"></span>
 </header>
 
 <main>
@@ -44,8 +44,8 @@
 
     <div id="call-incoming">
       <div class="call-icon">&#128222;</div>
-      <div class="call-label">Incoming Resolution Call</div>
-      <div class="call-sub">Agent 2 is ready to negotiate via voice</div>
+      <div class="call-label">Incoming Voice Call</div>
+      <div class="call-sub">Your specialist is ready to continue by voice</div>
       <div class="call-actions">
         <button class="btn-accept" onclick="acceptCall()">Accept</button>
         <button class="btn-decline" onclick="declineCall()">Decline</button>
@@ -53,6 +53,7 @@
     </div>
 
     <div id="call-panel">
+      <div class="call-live-label">Voice Call In Progress</div>
       <span id="call-status" class="call-status-pill pill-idle">Idle</span>
       <div class="volume-bar-container">
         <div id="volume-bar" class="volume-bar-fill"></div>
@@ -66,7 +67,7 @@
       <input id="chat-input" placeholder="Type a message as the borrower..." onkeydown="if(event.key==='Enter')sendMessage()">
       <button class="btn-primary" onclick="sendMessage()">Send</button>
     </div>
-    <div id="status-bar">
+    <div id="status-bar" class="metadata-only">
       <span>Workflow: <strong id="sb-wf">-</strong></span>
       <span>Stage: <strong id="sb-stage">-</strong></span>
       <span>Status: <strong id="sb-status">-</strong></span>

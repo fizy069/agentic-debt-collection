@@ -4,6 +4,7 @@ var seenMessageCount = 0;
 var pollTimer = null;
 
 var voiceEnabled = false;
+var showInternalMetadata = false;
 var inVoiceCall = false;
 var voiceCallShown = false;
 
@@ -36,9 +37,22 @@ async function fetchConfig() {
     var res = await fetch(API + '/config');
     if (res.ok) {
       var cfg = await res.json();
-      voiceEnabled = cfg.agent2_voice_enabled === true;
+      voiceEnabled = cfg.voice_enabled === true || cfg.agent2_voice_enabled === true;
+      showInternalMetadata = cfg.show_internal_metadata === true;
     }
-  } catch (_) {}
+  } catch (_) {
+    showInternalMetadata = false;
+  } finally {
+    applyMetadataVisibility();
+  }
+}
+
+function applyMetadataVisibility() {
+  document.body.classList.toggle('metadata-hidden', !showInternalMetadata);
+}
+
+function setVoiceScreenOpen(isOpen) {
+  document.body.classList.toggle('voice-screen-open', isOpen);
 }
 
 /* ---- Pipeline start ---- */
@@ -75,17 +89,19 @@ async function startPipeline() {
 
     document.getElementById('setup').style.display = 'none';
     document.getElementById('chat-area').style.display = 'flex';
-    document.getElementById('sb-wf').textContent = workflowId;
+    if (showInternalMetadata) {
+      document.getElementById('sb-wf').textContent = workflowId;
+    }
 
-    addSystemMsg('Pipeline started. Workflow: ' + workflowId);
-    if (voiceEnabled) addSystemMsg('Voice mode enabled for Resolution stage.');
+    addSystemMsg(showInternalMetadata ? ('Conversation started. Workflow: ' + workflowId) : 'Conversation started.');
+    if (voiceEnabled) addSystemMsg(showInternalMetadata ? 'Voice mode enabled for resolution stage.' : 'Voice mode is available when needed.');
     addBorrowerMsg(body.borrower.borrower_message);
 
     seenMessageCount = 0;
     voiceCallShown = false;
     startPolling();
   } catch (e) {
-    addSystemMsg('ERROR: ' + e.message);
+    addSystemMsg(showInternalMetadata ? ('ERROR: ' + e.message) : 'Could not start the conversation. Please try again.');
     btn.disabled = false;
     btn.textContent = 'Start Pipeline';
   }
@@ -112,7 +128,7 @@ async function sendMessage() {
       throw new Error(err.detail || res.statusText);
     }
   } catch (e) {
-    addSystemMsg('Send failed: ' + e.message);
+    addSystemMsg(showInternalMetadata ? ('Send failed: ' + e.message) : 'Message could not be sent. Please try again.');
   }
 }
 
@@ -124,15 +140,17 @@ async function pollStatus() {
     var res = await fetch(API + '/pipelines/' + workflowId);
     if (!res.ok) return;
     var data = await res.json();
+    var statusLabel = data.completed ? 'completed' : data.failed ? 'failed' : 'running';
 
-    document.getElementById('sb-stage').textContent = data.current_stage;
-    document.getElementById('sb-status').textContent =
-      data.completed ? 'completed' : data.failed ? 'failed' : 'running';
+    if (showInternalMetadata) {
+      document.getElementById('sb-stage').textContent = data.current_stage;
+      document.getElementById('sb-status').textContent = statusLabel;
 
-    var badge = document.getElementById('stage-badge');
-    badge.style.display = 'inline';
-    badge.textContent = data.current_stage;
-    badge.className = 'badge ' + (data.completed ? 'badge-done' : data.failed ? 'badge-err' : 'badge-stage');
+      var badge = document.getElementById('stage-badge');
+      badge.style.display = 'inline';
+      badge.textContent = data.current_stage;
+      badge.className = 'badge ' + (data.completed ? 'badge-done' : data.failed ? 'badge-err' : 'badge-stage');
+    }
 
     if (voiceEnabled && data.current_stage === 'resolution' && !voiceCallShown && !inVoiceCall) {
       voiceCallShown = true;
@@ -158,8 +176,14 @@ async function pollStatus() {
     if (data.completed || data.failed) {
       stopPolling();
       if (inVoiceCall) endCall();
+      hideIncomingCall();
+      setVoiceScreenOpen(false);
       var label = data.completed ? 'Pipeline completed' : 'Pipeline failed';
-      addSystemMsg(label + (data.final_outcome ? ' (' + data.final_outcome + ')' : '') + (data.error ? ': ' + data.error : ''));
+      if (showInternalMetadata) {
+        addSystemMsg(label + (data.final_outcome ? ' (' + data.final_outcome + ')' : '') + (data.error ? ': ' + data.error : ''));
+      } else {
+        addSystemMsg(data.completed ? 'Conversation completed.' : 'Conversation ended due to an error.');
+      }
       document.getElementById('chat-input').disabled = true;
     }
   } catch (_) {}
@@ -177,6 +201,7 @@ function stopPolling() {
 /* ---- Incoming call card ---- */
 
 function showIncomingCall() {
+  setVoiceScreenOpen(true);
   document.getElementById('call-incoming').style.display = 'flex';
   document.getElementById('input-bar').style.display = 'none';
 }
@@ -187,11 +212,12 @@ function hideIncomingCall() {
 
 async function acceptCall() {
   hideIncomingCall();
+  setVoiceScreenOpen(true);
   inVoiceCall = true;
   document.getElementById('call-panel').style.display = 'flex';
   document.getElementById('input-bar').style.display = 'none';
   setCallStatus('speaking');
-  addSystemMsg('Resolution voice call started.');
+  addSystemMsg('Voice call started.');
 
   /* Fetch filler audio in background */
   fetchFillerAudio();
@@ -208,7 +234,7 @@ async function acceptCall() {
       }
     }
   } catch (_) {
-    addSystemMsg('Could not fetch greeting audio.');
+    addSystemMsg(showInternalMetadata ? 'Could not fetch greeting audio.' : 'Could not start call audio.');
   }
 
   if (inVoiceCall) {
@@ -219,8 +245,9 @@ async function acceptCall() {
 
 function declineCall() {
   hideIncomingCall();
+  setVoiceScreenOpen(false);
   document.getElementById('input-bar').style.display = 'flex';
-  addSystemMsg('Voice call declined. Using text mode for Resolution.');
+  addSystemMsg('Voice call declined. Continuing in chat.');
 }
 
 function endCall() {
@@ -244,6 +271,8 @@ function endCall() {
   pendingRealAudio = null;
   fillerPlaying = false;
   document.getElementById('call-panel').style.display = 'none';
+  hideIncomingCall();
+  setVoiceScreenOpen(false);
   document.getElementById('input-bar').style.display = 'flex';
   document.getElementById('tts-player').pause();
   document.getElementById('volume-bar').style.width = '0%';
@@ -256,7 +285,7 @@ function maybeFinishResolutionCall() {
   var nextStage = pendingStageAdvance;
   pendingStageAdvance = null;
   endCall();
-  addSystemMsg('Resolution call ended - stage advanced to ' + nextStage);
+  addSystemMsg(showInternalMetadata ? ('Voice call ended - stage advanced to ' + nextStage) : 'Voice call ended. Returning to chat.');
 }
 
 /* ---- Call status pill ---- */
@@ -481,7 +510,7 @@ async function onVADRecordingDone() {
   document.getElementById('volume-bar').style.width = '0%';
   pendingRealAudio = null;
 
-  var fillerStarted = playFillerAudio();
+  playFillerAudio();
 
   var form = new FormData();
   form.append('audio', blob, 'recording.webm');
@@ -507,7 +536,7 @@ async function onVADRecordingDone() {
     addAgentMsg(data.assistant_reply, 'resolution');
 
     if (data.current_stage !== 'resolution' || data.stage_complete) {
-      addSystemMsg('Resolution stage complete.');
+      addSystemMsg('Voice handoff complete. Returning to chat.');
     }
 
     if (!data.audio_base64 || !data.audio_mime) {
@@ -523,7 +552,7 @@ async function onVADRecordingDone() {
       playRealAudio(data.audio_base64, data.audio_mime);
     }
   } catch (e) {
-    addSystemMsg('Voice turn failed: ' + e.message);
+    addSystemMsg(showInternalMetadata ? ('Voice turn failed: ' + e.message) : 'Voice call request failed. Please try again.');
     if (inVoiceCall) beginListening();
   } finally {
     voiceTurnInFlight = false;
@@ -544,7 +573,7 @@ function addAgentMsg(text, stage) {
   var el = document.createElement('div');
   el.className = 'msg msg-agent';
   el.textContent = text;
-  if (stage) {
+  if (stage && showInternalMetadata) {
     var s = document.createElement('div');
     s.className = 'msg-stage';
     s.textContent = stage;
@@ -563,5 +592,9 @@ function addSystemMsg(text) {
 function appendMsg(el) {
   var container = document.getElementById('messages');
   container.appendChild(el);
-  container.scrollTop = container.scrollHeight;
+  requestAnimationFrame(function() {
+    container.scrollTop = container.scrollHeight;
+  });
 }
+
+applyMetadataVisibility();
