@@ -89,6 +89,13 @@ def get_task_queue(request: Request) -> str:
     return task_queue
 
 
+def _is_enabled_env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @app.get("/health")
 async def healthcheck() -> dict[str, str]:
     return {"status": "ok"}
@@ -199,10 +206,17 @@ async def get_pipeline_status(
 
 @app.get("/config")
 async def get_config() -> dict[str, object]:
-    return {
-        "agent2_voice_enabled": is_voice_enabled(),
-        "voice_stage": "resolution",
+    voice_enabled = is_voice_enabled()
+    show_internal_metadata = _is_enabled_env_flag("TEST_UI_SHOW_METADATA", default=False)
+
+    cfg: dict[str, object] = {
+        "agent2_voice_enabled": voice_enabled,
+        "voice_enabled": voice_enabled,
+        "show_internal_metadata": show_internal_metadata,
     }
+    if show_internal_metadata:
+        cfg["voice_stage"] = "resolution"
+    return cfg
 
 
 _VOICE_POLL_INTERVAL_S = 0.25

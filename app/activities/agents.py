@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 import json
 import logging
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -26,13 +25,11 @@ from app.services.anthropic_client import AnthropicClient
 from app.services.compliance import (
     ABUSIVE_CLOSE_REPLY,
     STOP_CONTACT_REPLY,
-    allowed_consequences_directive,
     check_false_threats,
     check_offer_bounds,
     detect_abusive,
     detect_hardship,
     detect_stop_contact,
-    offer_policy_directive,
     redact_pii,
 )
 from app.services.compliance_judge import (
@@ -46,6 +43,14 @@ from app.services.compliance_vector_store import (
     vector_hits_to_metadata,
 )
 from app.services.handoff import build_handoff_summary
+from app.services.prompt_assembler import (
+    _format_recent_transcript,
+    _render_compliance_directives,
+    _render_turn_directives,
+    assemble_agent_prompt,
+    assemble_overflow_user_prompt,
+)
+from app.services.prompt_registry import get_prompt_registry
 from app.services.summarization import (
     build_overflow_prompt,
     get_policy_for_stage,
@@ -174,7 +179,8 @@ def _parse_stage_response(
         )
 
 
-def _borrower_snapshot(borrower: BorrowerRequest) -> str:
+def _borrower_snapshot_for_overflow(borrower: BorrowerRequest) -> str:
+    """Rebuild borrower snapshot for overflow compression input."""
     masked_reference = borrower.account_reference[-4:]
     return (
         f"Borrower ID: {borrower.borrower_id}\n"
@@ -186,44 +192,15 @@ def _borrower_snapshot(borrower: BorrowerRequest) -> str:
     )
 
 
-def _format_recent_transcript(
-    transcript: list[ConversationMessage],
-    max_items: int = 8,
-) -> str:
-    if not transcript:
-        return "No prior transcript."
-    recent = transcript[-max_items:]
-    lines = []
-    for item in recent:
-        stage = item.stage.value if item.stage else "none"
-        lines.append(f"{item.role.value}@{stage}: {item.text}")
-    return "\n".join(lines)
-
-
-_PROMPT_FILES = {
-    PipelineStage.ASSESSMENT: "assessment.txt",
-    PipelineStage.RESOLUTION: "resolution.txt",
-    PipelineStage.FINAL_NOTICE: "final_notice.txt",
-}
-
-
-@lru_cache(maxsize=3)
-def _load_prompt(stage: PipelineStage) -> str:
-    """Load system prompt text from ``app/prompts/<stage>.txt``."""
-    filename = _PROMPT_FILES[stage]
-    path = Path(__file__).resolve().parent.parent / "prompts" / filename
-    return path.read_text(encoding="utf-8").strip()
-
-
-def _stage_defaults(
+def _stage_routing(
     stage: PipelineStage,
-) -> tuple[AgentChannel, PipelineStage | None, str]:
-    system_prompt = _load_prompt(stage)
+) -> tuple[AgentChannel, PipelineStage | None]:
+    """Return (channel, next_stage) for the given pipeline stage."""
     if stage == PipelineStage.ASSESSMENT:
-        return AgentChannel.CHAT, PipelineStage.RESOLUTION, system_prompt
+        return AgentChannel.CHAT, PipelineStage.RESOLUTION
     if stage == PipelineStage.RESOLUTION:
-        return AgentChannel.VOICE_STUB, PipelineStage.FINAL_NOTICE, system_prompt
-    return AgentChannel.CHAT, None, system_prompt
+        return AgentChannel.VOICE_STUB, PipelineStage.FINAL_NOTICE
+    return AgentChannel.CHAT, None
 
 
 def _final_notice_expiry_date(
@@ -233,30 +210,6 @@ def _final_notice_expiry_date(
 ) -> str:
     anchor = base_date or datetime.now(timezone.utc).date()
     return (anchor + timedelta(days=window_days)).isoformat()
-
-
-def _build_turn_directives(
-    *,
-    stage: PipelineStage,
-    final_notice_expiry: str | None = None,
-) -> str:
-    if stage == PipelineStage.FINAL_NOTICE:
-        expiry = final_notice_expiry or _final_notice_expiry_date()
-        return (
-            "Respond in 3-6 concise sentences. "
-            f"Use this exact hard expiry date: {expiry}. "
-            "Never use placeholders (for example, '[insert hard expiry date]'). "
-            "If all required information is collected, close with a definitive "
-            "statement and do not ask a follow-up question. "
-            "Otherwise, ask one concrete acknowledgement question."
-        )
-
-    return (
-        "Respond in 3-6 concise sentences. "
-        "If information is still missing, ask one concrete follow-up question. "
-        "If all required information is collected, provide a brief "
-        "transition-ready closing statement without asking a question."
-    )
 
 
 async def _compress_overflow(
@@ -329,7 +282,7 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
             "action=hardcoded_reply",
             turn_input.stage.value, turn_input.turn_index, msg_tokens,
         )
-        channel, next_stage, _ = _stage_defaults(turn_input.stage)
+        channel, next_stage = _stage_routing(turn_input.stage)
         return StageTurnOutput(
             stage=turn_input.stage,
             channel=channel,
@@ -351,7 +304,7 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
 
     # --- Compliance pre-checks on borrower input ---
     flags = ComplianceFlags(**turn_input.compliance_flags.model_dump())
-    channel, next_stage, _ = _stage_defaults(turn_input.stage)
+    channel, next_stage = _stage_routing(turn_input.stage)
 
     borrower_message, pii_redacted = redact_pii(turn_input.borrower_message)
     if pii_redacted:
@@ -417,7 +370,7 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
             turn_input.stage.value, turn_input.turn_index,
         )
 
-    channel, next_stage, system_prompt = _stage_defaults(turn_input.stage)
+    channel, next_stage = _stage_routing(turn_input.stage)
 
     field_keys = _STAGE_FIELD_KEYS.get(turn_input.stage, [])
     prior_fields = {k: turn_input.collected_fields.get(k, False) for k in field_keys}
@@ -427,51 +380,28 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
         if turn_input.stage == PipelineStage.FINAL_NOTICE
         else None
     )
-    report = ContextBudgetReport(limit=MAX_CONTEXT_TOKENS)
 
-    report.add("system_prompt", system_prompt)
-
-    snapshot_section = f"Borrower snapshot:\n{_borrower_snapshot(turn_input.borrower)}"
-    turn_meta_lines = [
-        f"Current stage: {turn_input.stage.value}",
-        f"Turn index in stage: {turn_input.turn_index}",
-        f"Borrower message: {borrower_message}",
-        f"Collected fields so far: {prior_fields}",
-    ]
-    if flags.hardship_detected:
-        turn_meta_lines.append(
-            "COMPLIANCE: Hardship detected — offer hardship referral route. "
-            "Do not pressure the borrower."
-        )
-    if final_notice_expiry:
-        turn_meta_lines.append(f"Hard expiry date: {final_notice_expiry}")
-    turn_meta_section = "\n".join(turn_meta_lines)
-    transcript_section = (
-        "Recent transcript:\n"
-        f"{_format_recent_transcript(turn_input.transcript)}"
-    )
-    directives_section = _build_turn_directives(
+    # --- Assemble prompt via registry + assembler ---
+    registry = get_prompt_registry()
+    config = registry.get_agent_config(turn_input.stage)
+    assembled = assemble_agent_prompt(
+        config,
+        borrower=turn_input.borrower,
+        borrower_message=borrower_message,
         stage=turn_input.stage,
+        turn_index=turn_input.turn_index,
+        prior_fields=prior_fields,
+        transcript=turn_input.transcript,
+        completed_stages=turn_input.completed_stages,
+        flags=flags,
         final_notice_expiry=final_notice_expiry,
     )
-    if turn_input.stage in (PipelineStage.RESOLUTION, PipelineStage.FINAL_NOTICE):
-        directives_section += f" {offer_policy_directive()}"
-        directives_section += f" {allowed_consequences_directive()}"
+    system_prompt = assembled.system_prompt
+    user_prompt = assembled.user_prompt
 
-    handoff_section = ""
-    if turn_input.completed_stages:
-        handoff_section = build_handoff_summary(
-            turn_input.completed_stages,
-            turn_input.borrower.model_dump(mode="json"),
-            [msg.model_dump(mode="json") for msg in turn_input.transcript],
-            target_stage=turn_input.stage.value,
-        )
-        report.handoff_tokens = report.add("handoff", handoff_section)
-
-    report.add("snapshot", snapshot_section)
-    report.add("turn_meta", turn_meta_section)
-    report.add("transcript", transcript_section)
-    report.add("directives", directives_section)
+    report = ContextBudgetReport(limit=MAX_CONTEXT_TOKENS)
+    report.add("system_prompt", system_prompt)
+    report.add("user_prompt", user_prompt)
     report.pre_overflow_tokens = report.total_tokens
 
     if report.total_tokens > MAX_CONTEXT_TOKENS:
@@ -481,12 +411,27 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
             report.total_tokens, MAX_CONTEXT_TOKENS,
         )
 
-        system_tokens = count_tokens(system_prompt)
+        st = assembled.metadata.get("section_tokens", {})
+        system_tokens = st.get("system_prompt", count_tokens(system_prompt))
+        directives_tokens = st.get("directives", 0)
+        turn_meta_tokens = st.get("turn_meta", 0)
         available = MAX_CONTEXT_TOKENS - system_tokens
-        directives_tokens = count_tokens(directives_section)
-        turn_meta_tokens = count_tokens(turn_meta_section)
         reserved = directives_tokens + turn_meta_tokens
         compressible_budget = max(50, available - reserved)
+
+        snapshot_section = f"Borrower snapshot:\n{_borrower_snapshot_for_overflow(turn_input.borrower)}"
+        transcript_section = (
+            "Recent transcript:\n"
+            f"{_format_recent_transcript(turn_input.transcript)}"
+        )
+        handoff_section = ""
+        if turn_input.completed_stages:
+            handoff_section = build_handoff_summary(
+                turn_input.completed_stages,
+                turn_input.borrower.model_dump(mode="json"),
+                [msg.model_dump(mode="json") for msg in turn_input.transcript],
+                target_stage=turn_input.stage.value,
+            )
 
         compressible_content = ""
         if handoff_section:
@@ -508,11 +453,30 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
             used_llm, used_fallback,
         )
 
-        user_prompt = (
-            "Continue the debt-collection conversation for the current stage.\n\n"
-            f"{compressed}\n\n"
-            f"{turn_meta_section}\n\n"
-            f"{directives_section}"
+        turn_meta_lines = [
+            f"Current stage: {turn_input.stage.value}",
+            f"Turn index in stage: {turn_input.turn_index}",
+            f"Borrower message: {borrower_message}",
+            f"Collected fields so far: {prior_fields}",
+        ]
+        if flags.hardship_detected:
+            turn_meta_lines.append(
+                "COMPLIANCE: Hardship detected \u2014 offer hardship referral route. "
+                "Do not pressure the borrower."
+            )
+        if final_notice_expiry:
+            turn_meta_lines.append(f"Hard expiry date: {final_notice_expiry}")
+        turn_meta_section = "\n".join(turn_meta_lines)
+
+        directives_section = _render_turn_directives(config, final_notice_expiry)
+        compliance_dir = _render_compliance_directives(config)
+        if compliance_dir:
+            directives_section += f" {compliance_dir}"
+
+        user_prompt = assemble_overflow_user_prompt(
+            compressed=compressed,
+            turn_meta_section=turn_meta_section,
+            directives_section=directives_section,
         )
 
         report.sections.clear()
@@ -522,16 +486,6 @@ async def _run_stage_turn(payload: dict[str, Any]) -> dict[str, Any]:
         report.add("directives", directives_section)
         report.post_overflow_tokens = report.total_tokens
     else:
-        user_prompt_parts = ["Continue the debt-collection conversation for the current stage.\n"]
-        if handoff_section:
-            user_prompt_parts.append(f"Prior stage context:\n{handoff_section}\n")
-        user_prompt_parts.extend([
-            f"{snapshot_section}\n",
-            f"{turn_meta_section}\n",
-            f"{transcript_section}\n",
-            directives_section,
-        ])
-        user_prompt = "\n".join(user_prompt_parts)
         report.post_overflow_tokens = report.total_tokens
 
     system_prompt, user_prompt = enforce_context_budget(
