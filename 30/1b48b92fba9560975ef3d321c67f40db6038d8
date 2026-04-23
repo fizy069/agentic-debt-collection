@@ -1,0 +1,17 @@
+app/static/test.js
+  h_7f63ecbcbb8eec 25-27,143-144,229-231,252-259,261,316,318-319,323,332,335-339,346-350,364,367-368,372-373,488,501-504,514,528-530
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "301b48b92fba9560975ef3d321c67f40db6038d8",
+  "prompts": {},
+  "humans": {
+    "h_55bf61dfd6cf88": {
+      "author": "Mahir Ghadiali (mghadial)"
+    },
+    "h_7f63ecbcbb8eec": {
+      "author": "fizy069"
+    }
+  }
+}
