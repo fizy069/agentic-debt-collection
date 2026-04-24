@@ -137,7 +137,7 @@ class BorrowerWorkflow:
         compliance_flags = ComplianceFlags()
 
         _turn_caps: dict[PipelineStage, int] = {
-            PipelineStage.ASSESSMENT: 5,
+            PipelineStage.ASSESSMENT: 7,
             PipelineStage.RESOLUTION: 3,
             PipelineStage.FINAL_NOTICE: 2,
         }
