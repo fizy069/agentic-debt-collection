@@ -1,4 +1,21 @@
-# Simple Agent Pipeline
+# What is this repo about?
+
+This repo contains a 3-agent chat/voice workflow that acts as a post-default debt collection system. 
+
+Some key architectural decisions taken: 
+1. Since we have a tight 2000 token budget for the entire agent, we need to scope each agent tightly. Handoffs and summarization must be deterministic. For this to be possible, i've templated handoff and summarization into fixed JSON schemas. This ensures token efficient info transfer without loss of crucial info. 
+
+2. Compliance : For compliance, we have a 2 layer system. Layer 1 performs rudimentary checks, and also performs a vector DB lookup for possible violations. Layer 2 is an LLM-as-a-judge layer that populates the layer 1 database.
+   As more users register interactions with the agent, we have fewer cache misses, and eventually the higher-token costing LLM as a judge API call is invoked lesser.
+
+3. Self learning : Treating the agent's prompts, and the judges prompts as first-class citizens allows for cleanly implementing a self learning loop, and a meta evaluation layer that evaluates the judges themselves, hence satisfying the Darwin Godel Model design for the system.
+
+
+
+
+
+
+# Debt Resolution Pipeline
 
 Temporal-orchestrated borrower workflow for a post-default debt collection flow. The project combines a FastAPI API, a Temporal worker, stage-specific agent activities, compliance guardrails, token-budgeted handoffs, and an optional browser-based voice experience for the Resolution stage.
 
