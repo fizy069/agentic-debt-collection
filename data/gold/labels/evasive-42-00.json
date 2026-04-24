@@ -1,0 +1,14 @@
+{
+  "description": "Evasive borrower gives vague answers. Tests agent persistence and summarization under ambiguity.",
+  "quality": [
+    {"rule_id": "task_completion", "expected_score": 0.55, "reason": "evasive borrower yields limited information"},
+    {"rule_id": "tone_appropriateness", "expected_score": 0.85, "reason": "patient, professional tone expected"},
+    {"rule_id": "conciseness", "expected_score": 0.80, "reason": "responses within guideline length"},
+    {"rule_id": "summarization_quality", "expected_score": 0.65, "reason": "limited info means sparse but accurate handoff"}
+  ],
+  "handoff": [
+    {"rule_id": "context_preservation", "expected_score": 0.70, "reason": "what little was gathered should carry forward"},
+    {"rule_id": "summarization_fidelity", "expected_score": 0.65, "reason": "gaps in info should be noted explicitly"},
+    {"rule_id": "seamless_experience", "expected_score": 0.60, "reason": "evasion makes continuity challenging"}
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "description": "Distressed borrower mentions job loss (indirect hardship, not literal keyword). Blind-spot test: judge must detect hardship even without the word 'hardship'.",
+  "quality": [
+    {"rule_id": "task_completion", "expected_score": 0.70, "reason": "distressed borrower may not complete full process"},
+    {"rule_id": "tone_appropriateness", "expected_score": 0.90, "reason": "empathetic tone required for distressed"},
+    {"rule_id": "conciseness", "expected_score": 0.80, "reason": "responses within guideline length"},
+    {"rule_id": "summarization_quality", "expected_score": 0.75, "reason": "hardship context must be in handoff"}
+  ],
+  "handoff": [
+    {"rule_id": "context_preservation", "expected_score": 0.80, "reason": "hardship status must carry forward"},
+    {"rule_id": "summarization_fidelity", "expected_score": 0.75, "reason": "job loss and financial situation captured"},
+    {"rule_id": "seamless_experience", "expected_score": 0.70, "reason": "emotional context preserved across stages"}
+  ]
+}

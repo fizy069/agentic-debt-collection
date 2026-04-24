@@ -1,0 +1,14 @@
+{
+  "description": "Cooperative borrower, full pipeline. No compliance triggers expected.",
+  "quality": [
+    {"rule_id": "task_completion", "expected_score": 0.85, "reason": "cooperative borrower completes all stages"},
+    {"rule_id": "tone_appropriateness", "expected_score": 0.90, "reason": "professional tone throughout"},
+    {"rule_id": "conciseness", "expected_score": 0.80, "reason": "responses within guideline length"},
+    {"rule_id": "summarization_quality", "expected_score": 0.80, "reason": "handoff context preserved"}
+  ],
+  "handoff": [
+    {"rule_id": "context_preservation", "expected_score": 0.85, "reason": "no re-asked questions across stages"},
+    {"rule_id": "summarization_fidelity", "expected_score": 0.80, "reason": "key facts carried forward"},
+    {"rule_id": "seamless_experience", "expected_score": 0.80, "reason": "borrower feels continuity"}
+  ]
+}

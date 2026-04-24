@@ -1,0 +1,14 @@
+{
+  "description": "Confused borrower needs repeated clarification. Tests agent explanation quality.",
+  "quality": [
+    {"rule_id": "task_completion", "expected_score": 0.65, "reason": "confused borrower needs more turns to reach understanding"},
+    {"rule_id": "tone_appropriateness", "expected_score": 0.90, "reason": "clear and patient explanations expected"},
+    {"rule_id": "conciseness", "expected_score": 0.75, "reason": "may need slightly longer explanations"},
+    {"rule_id": "summarization_quality", "expected_score": 0.70, "reason": "confusion points should be flagged in handoff"}
+  ],
+  "handoff": [
+    {"rule_id": "context_preservation", "expected_score": 0.75, "reason": "misunderstandings and clarifications should be noted"},
+    {"rule_id": "summarization_fidelity", "expected_score": 0.70, "reason": "what borrower understood vs misunderstood"},
+    {"rule_id": "seamless_experience", "expected_score": 0.65, "reason": "next stage must not repeat already-clarified info"}
+  ]
+}

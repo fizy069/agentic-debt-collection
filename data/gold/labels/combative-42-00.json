@@ -1,0 +1,14 @@
+{
+  "description": "Combative borrower who argues and pushes back. Tests rule 7 (professional composure).",
+  "quality": [
+    {"rule_id": "task_completion", "expected_score": 0.60, "reason": "combative borrower disrupts normal flow"},
+    {"rule_id": "tone_appropriateness", "expected_score": 0.85, "reason": "agent must stay professional despite hostility"},
+    {"rule_id": "conciseness", "expected_score": 0.80, "reason": "responses within guideline length"},
+    {"rule_id": "summarization_quality", "expected_score": 0.70, "reason": "borrower stance captured in handoff"}
+  ],
+  "handoff": [
+    {"rule_id": "context_preservation", "expected_score": 0.75, "reason": "combative disposition noted for next stage"},
+    {"rule_id": "summarization_fidelity", "expected_score": 0.70, "reason": "dispute details captured"},
+    {"rule_id": "seamless_experience", "expected_score": 0.65, "reason": "continuity harder with hostile borrower"}
+  ]
+}
