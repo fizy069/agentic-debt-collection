@@ -1,0 +1,34 @@
+app/prompts/resolution.txt
+  h_7f63ecbcbb8eec 1
+app/prompts/final_notice.txt
+  h_7f63ecbcbb8eec 1
+app/workflows/borrower_workflow.py
+  bf5851336dc15315 140
+app/prompts/assessment.txt
+  h_7f63ecbcbb8eec 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "d88ca6af07151fc6c97984e8856c8841449df14b",
+  "prompts": {
+    "bf5851336dc15315": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "27c56a14-bbbd-4446-98e3-34b3677383d9",
+        "model": "claude-4.6-opus-max"
+      },
+      "human_author": "fizy069",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 309,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_7f63ecbcbb8eec": {
+      "author": "fizy069"
+    }
+  }
+}
